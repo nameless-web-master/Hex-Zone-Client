@@ -1,12 +1,18 @@
-import { useMemo, useState } from 'react';
-import { MapContainer, TileLayer, Polygon, Popup, useMapEvent } from 'react-leaflet';
-import { getCellFromCoords, getHexGrid, H3Cell } from '../lib/h3';
+import { useMemo, useState } from "react";
+import {
+  MapContainer,
+  TileLayer,
+  Polygon,
+  Popup,
+  useMapEvent,
+} from "react-leaflet";
+import { getCellFromCoords, getHexGrid, H3Cell } from "../lib/h3";
 
 interface ZoneBuilderMapProps {
   resolution: number;
   selectedCells: string[];
   selectedColor: string;
-  mode: 'hex' | 'polygon';
+  mode: "hex" | "polygon";
   polygonPoints: [number, number][];
   onCellToggle: (cell: string) => void;
   onPolygonAddPoint: (point: [number, number]) => void;
@@ -14,10 +20,22 @@ interface ZoneBuilderMapProps {
   center?: [number, number];
 }
 
-function MapClickHandler({ mode, resolution, onCellToggle, onPolygonAddPoint }: Omit<ZoneBuilderMapProps, 'selectedCells' | 'selectedColor' | 'polygonPoints' | 'onPolygonReset' | 'center'>) {
-  useMapEvent('click', (event) => {
+function MapClickHandler({
+  mode,
+  resolution,
+  onCellToggle,
+  onPolygonAddPoint,
+}: Omit<
+  ZoneBuilderMapProps,
+  | "selectedCells"
+  | "selectedColor"
+  | "polygonPoints"
+  | "onPolygonReset"
+  | "center"
+>) {
+  useMapEvent("click", (event) => {
     const { lat, lng } = event.latlng;
-    if (mode === 'polygon') {
+    if (mode === "polygon") {
       onPolygonAddPoint([lat, lng]);
     } else {
       const cell = getCellFromCoords(lat, lng, resolution);
@@ -36,17 +54,22 @@ export default function ZoneBuilderMap({
   onCellToggle,
   onPolygonAddPoint,
   onPolygonReset,
-  center = [37.7749, -122.4194]
+  center = [37.7749, -122.4194],
 }: ZoneBuilderMapProps) {
   const [mapCenter] = useState(center);
-  const hexGrid = useMemo<H3Cell[]>(() => getHexGrid(mapCenter, resolution, 2), [mapCenter, resolution]);
+  const hexGrid = useMemo<H3Cell[]>(
+    () => getHexGrid(mapCenter, resolution, 2),
+    [mapCenter, resolution],
+  );
 
   return (
     <div className="rounded-[2rem] border border-slate-800/90 bg-slate-950/80 p-4 shadow-glow">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-white">Zone Builder Map</h2>
-          <p className="text-sm text-slate-400">Click the map to select H3 cells or draw a polygon boundary.</p>
+          <p className="text-sm text-slate-400">
+            Click the map to select H3 cells or draw a polygon boundary.
+          </p>
         </div>
         <button
           onClick={onPolygonReset}
@@ -56,7 +79,12 @@ export default function ZoneBuilderMap({
         </button>
       </div>
       <div className="h-[560px] rounded-[1.75rem] overflow-hidden">
-        <MapContainer center={mapCenter} zoom={12} scrollWheelZoom className="h-full w-full">
+        <MapContainer
+          center={mapCenter}
+          zoom={12}
+          scrollWheelZoom
+          className="h-full w-full"
+        >
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -66,12 +94,15 @@ export default function ZoneBuilderMap({
             return (
               <Polygon
                 key={hex.id}
-                positions={hex.polygon.map(([lng, lat]: [number, number]) => [lat, lng] as [number, number])}
+                positions={hex.polygon.map(
+                  ([lng, lat]: [number, number]) =>
+                    [lat, lng] as [number, number],
+                )}
                 pathOptions={{
-                  color: isActive ? selectedColor : '#0f172a',
+                  color: isActive ? selectedColor : "#0f172a",
                   weight: 1,
-                  fillColor: isActive ? selectedColor : '#0f172a',
-                  fillOpacity: isActive ? 0.35 : 0.08
+                  fillColor: isActive ? selectedColor : "#0f172a",
+                  fillOpacity: isActive ? 0.35 : 0.08,
                 }}
               >
                 <Popup>
@@ -82,7 +113,7 @@ export default function ZoneBuilderMap({
                       className="rounded-xl bg-teal-500 px-3 py-1 text-xs font-semibold text-slate-950"
                       onClick={() => onCellToggle(hex.id)}
                     >
-                      {isActive ? 'Remove' : 'Select'}
+                      {isActive ? "Remove" : "Select"}
                     </button>
                   </div>
                 </Popup>
@@ -91,11 +122,23 @@ export default function ZoneBuilderMap({
           })}
           {polygonPoints.length > 0 && (
             <Polygon
-              positions={polygonPoints.map(([lat, lng]) => [lat, lng] as [number, number])}
-              pathOptions={{ color: '#20c997', weight: 3, dashArray: '8 6', fillOpacity: 0.12 }}
+              positions={polygonPoints.map(
+                ([lat, lng]) => [lat, lng] as [number, number],
+              )}
+              pathOptions={{
+                color: "#20c997",
+                weight: 3,
+                dashArray: "8 6",
+                fillOpacity: 0.12,
+              }}
             />
           )}
-          <MapClickHandler mode={mode} resolution={resolution} onCellToggle={onCellToggle} onPolygonAddPoint={onPolygonAddPoint} />
+          <MapClickHandler
+            mode={mode}
+            resolution={resolution}
+            onCellToggle={onCellToggle}
+            onPolygonAddPoint={onPolygonAddPoint}
+          />
         </MapContainer>
       </div>
     </div>

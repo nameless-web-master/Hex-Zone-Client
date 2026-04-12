@@ -30,6 +30,15 @@ export default function DeviceManager() {
       .finally(() => setLoading(false));
   }, []);
 
+  const online = useMemo(
+    () => devices.filter((d) => d.active).length,
+    [devices],
+  );
+  const offline = useMemo(
+    () => devices.filter((d) => !d.active).length,
+    [devices],
+  );
+
   const sortedDevices = useMemo(() => {
     return [...devices].sort((a, b) => {
       if (sortKey === 'name') {
