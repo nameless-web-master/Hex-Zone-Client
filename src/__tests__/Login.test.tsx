@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import Login from '../pages/Login';
 
@@ -9,6 +9,10 @@ vi.mock('../hooks/useAuth', () => ({
   useAuth: () => ({
     login: loginMock
   })
+}));
+
+vi.mock('../components/AuthMapPanel', () => ({
+  default: () => <div data-testid="auth-map-panel" />
 }));
 
 describe('Login page', () => {
@@ -21,13 +25,14 @@ describe('Login page', () => {
 
     const emailInput = screen.getByLabelText(/email/i);
     const passwordInput = screen.getByLabelText(/password/i);
-    const submitButton = screen.getByRole('button', { name: /sign in/i });
+    const submitButton = screen.getByRole('button', { name: /^login$/i });
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'SecurePass123' } });
     fireEvent.click(submitButton);
 
-    expect(await screen.findByRole('button', { name: /sign in/i })).toBeInTheDocument();
-    expect(loginMock).toHaveBeenCalledWith('user@example.com', 'SecurePass123');
+    await waitFor(() => {
+      expect(loginMock).toHaveBeenCalledWith('user@example.com', 'SecurePass123');
+    });
   });
 });
