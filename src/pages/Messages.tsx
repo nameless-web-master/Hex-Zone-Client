@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchZones, fetchDevices } from '../lib/api';
+import { fetchZones, fetchDevices, type DeviceResponse } from '../lib/api';
 import { MessageCircle, Filter } from 'lucide-react';
 
 interface Zone {
@@ -9,13 +9,10 @@ interface Zone {
   description?: string;
 }
 
-interface Device {
-  id: number;
-  name: string;
-  hid: string;
-  h3_cell_id?: string;
-  active: boolean;
-}
+type Device = Pick<
+  DeviceResponse,
+  'id' | 'name' | 'hid' | 'h3_cell_id' | 'active'
+>;
 
 interface MessageItem {
   id: string;

@@ -1,19 +1,10 @@
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as turf from "@turf/turf";
 import {
   Copy,
   Download,
-  Loader2,
   MapPin,
   Ruler,
-  Search,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -23,6 +14,7 @@ import HexMapperMap, {
   type SavedZoneCellLayer,
   type SavedZonePolygonLayer,
 } from "../components/HexMapperMap";
+import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
 import { useAuth } from "../hooks/useAuth";
 import { useZones, type SavedZone } from "../hooks/useZones";
 import {
@@ -47,11 +39,6 @@ import {
   parseKmlToPolygons,
   parseWktToPolygons,
 } from "../lib/wktKml";
-import {
-  formatPhotonLabel,
-  searchPhotonAddresses,
-  type PhotonFeature,
-} from "../lib/addressSearch";
 import { cornersFromH3Cell, cornersFromPolygonShape } from "../lib/mapBounds";
 
 const accent = "#00E5D1";
@@ -379,12 +366,6 @@ export default function Dashboard() {
   );
 
   const [locationQuery, setLocationQuery] = useState("");
-  const [locSuggestions, setLocSuggestions] = useState<PhotonFeature[]>([]);
-  const [locOpen, setLocOpen] = useState(false);
-  const [locLoading, setLocLoading] = useState(false);
-  const [locFocus, setLocFocus] = useState(false);
-  const locListId = useId();
-  const locBlurTimer = useRef<number | null>(null);
 
   const [pasteText, setPasteText] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
@@ -433,39 +414,6 @@ export default function Dashboard() {
   }, [zones, activeSavedZoneId]);
 
   useEffect(() => {
-    if (!locFocus) {
-      setLocSuggestions([]);
-      setLocLoading(false);
-      setLocOpen(false);
-      return;
-    }
-    const q = locationQuery.trim();
-    if (q.length < 2) {
-      setLocSuggestions([]);
-      setLocOpen(false);
-      return;
-    }
-    const ac = new AbortController();
-    const t = window.setTimeout(() => {
-      setLocLoading(true);
-      searchPhotonAddresses(q, ac.signal)
-        .then((features) => {
-          setLocSuggestions(features);
-          setLocOpen(features.length > 0);
-        })
-        .catch((e: Error) => {
-          if (e.name === "AbortError") return;
-          setLocSuggestions([]);
-        })
-        .finally(() => setLocLoading(false));
-    }, 320);
-    return () => {
-      window.clearTimeout(t);
-      ac.abort();
-    };
-  }, [locationQuery, locFocus]);
-
-  useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest?.("[data-context-menu-root]")) return;
@@ -501,19 +449,6 @@ export default function Dashboard() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [activeTool, drawingActive]);
-
-  const pickLocation = useCallback((feature: PhotonFeature) => {
-    if (locBlurTimer.current != null) {
-      window.clearTimeout(locBlurTimer.current);
-      locBlurTimer.current = null;
-    }
-    const label = formatPhotonLabel(feature.properties);
-    const [lon, lat] = feature.geometry.coordinates;
-    setLocationQuery(label);
-    setMapCenter([lat, lon]);
-    setLocOpen(false);
-    setLocSuggestions([]);
-  }, []);
 
   const toggleCell = useCallback((cell: string) => {
     setSelectedCells((current) =>
@@ -1294,52 +1229,23 @@ export default function Dashboard() {
                   className="accent-[#00E5D1]"
                 />
               </label>
-              <div>
-                <label className={labelClass} htmlFor="dash-loc">
-                  Search location
-                </label>
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                  <input
-                    id="dash-loc"
-                    value={locationQuery}
-                    onChange={(e) => setLocationQuery(e.target.value)}
-                    onFocus={() => setLocFocus(true)}
-                    onBlur={() => {
-                      locBlurTimer.current = window.setTimeout(() => {
-                        setLocOpen(false);
-                        setLocFocus(false);
-                      }, 160);
-                    }}
-                    placeholder="Address…"
-                    autoComplete="off"
-                    className={`w-full rounded-md border border-slate-700/80 ${panel} py-2 pl-9 pr-9 text-sm text-white`}
-                  />
-                  {locLoading && (
-                    <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[#00E5D1]" />
-                  )}
-                  {locOpen && locSuggestions.length > 0 && (
-                    <ul
-                      id={locListId}
-                      role="listbox"
-                      className="absolute z-30 mt-1 max-h-48 w-full overflow-auto rounded-md border border-slate-600/90 bg-[#1a222c] py-1 shadow-xl"
-                    >
-                      {locSuggestions.map((f, i) => (
-                        <li key={`${f.geometry.coordinates.join(",")}-${i}`}>
-                          <button
-                            type="button"
-                            className="w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-[#00E5D1]/10 hover:text-[#00E5D1]"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => pickLocation(f)}
-                          >
-                            {formatPhotonLabel(f.properties)}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
+              <AddressAutocompleteInput
+                id="dash-loc"
+                label="Search location"
+                value={locationQuery}
+                onChange={(address, coords) => {
+                  setLocationQuery(address);
+                  if (coords) {
+                    const [lat, lng] = coords;
+                    setMapCenter([lat, lng]);
+                  }
+                }}
+                required={false}
+                placeholder="Search for a street or place…"
+                labelClassName={labelClass}
+                inputClassName={`w-full rounded-md border border-slate-700/80 ${panel} px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`}
+                className="relative z-10"
+              />
               <div className="flex gap-2">
                 <button
                   type="button"

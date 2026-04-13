@@ -1,20 +1,9 @@
-import {
-  FormEvent,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ChevronRight, Eye, EyeOff, Loader2, QrCode } from "lucide-react";
+import { ChevronRight, Eye, EyeOff, QrCode } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import AuthMapPanel from "../components/AuthMapPanel";
-import {
-  formatPhotonLabel,
-  searchPhotonAddresses,
-  type PhotonFeature,
-} from "../lib/addressSearch";
+import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
 import {
   addressToMockCoords,
   generateZoneId,
@@ -64,16 +53,6 @@ export default function CreateAccount() {
   const [addressCoords, setAddressCoords] = useState<[number, number] | null>(
     null,
   );
-  const [addressSuggestions, setAddressSuggestions] = useState<PhotonFeature[]>(
-    [],
-  );
-  const [addressSuggestOpen, setAddressSuggestOpen] = useState(false);
-  const [addressSuggestLoading, setAddressSuggestLoading] = useState(false);
-  const [addressHighlight, setAddressHighlight] = useState(0);
-  const [addressFieldFocused, setAddressFieldFocused] = useState(false);
-  const addressListId = useId();
-  const addressBlurTimeout = useRef<number | null>(null);
-
   const [zoneId, setZoneId] = useState(() => generateZoneId());
   const [useExistingZone, setUseExistingZone] = useState(false);
   const [existingZoneId, setExistingZoneId] = useState("");
@@ -86,54 +65,6 @@ export default function CreateAccount() {
   );
   const grid = useMemo<H3Cell[]>(() => getHexGrid(center, 13, 1), [center]);
 
-  useEffect(() => {
-    if (!addressFieldFocused) {
-      setAddressSuggestions([]);
-      setAddressSuggestLoading(false);
-      setAddressSuggestOpen(false);
-      return;
-    }
-    const q = address.trim();
-    if (q.length < 2) {
-      setAddressSuggestions([]);
-      setAddressSuggestLoading(false);
-      setAddressSuggestOpen(false);
-      return;
-    }
-    const ac = new AbortController();
-    const timer = window.setTimeout(() => {
-      setAddressSuggestLoading(true);
-      searchPhotonAddresses(q, ac.signal)
-        .then((features) => {
-          setAddressSuggestions(features);
-          setAddressHighlight(0);
-          setAddressSuggestOpen(features.length > 0);
-        })
-        .catch((err: Error) => {
-          if (err.name === "AbortError") return;
-          setAddressSuggestions([]);
-          setAddressSuggestOpen(false);
-        })
-        .finally(() => setAddressSuggestLoading(false));
-    }, 320);
-    return () => {
-      window.clearTimeout(timer);
-      ac.abort();
-    };
-  }, [address, addressFieldFocused]);
-
-  const selectAddressSuggestion = (feature: PhotonFeature) => {
-    if (addressBlurTimeout.current != null) {
-      window.clearTimeout(addressBlurTimeout.current);
-      addressBlurTimeout.current = null;
-    }
-    const label = formatPhotonLabel(feature.properties);
-    const [lon, lat] = feature.geometry.coordinates;
-    setAddress(label);
-    setAddressCoords([lat, lon]);
-    setAddressSuggestOpen(false);
-    setAddressSuggestions([]);
-  };
   const selectedZoneId =
     useExistingZone && existingZoneId ? existingZoneId : zoneId;
 
@@ -249,110 +180,19 @@ export default function CreateAccount() {
                 />
               </div>
 
-              <div className="relative">
-                <label htmlFor="reg-address" className={labelClass}>
-                  Address
-                </label>
-                <div className="relative">
-                  <input
-                    id="reg-address"
-                    role="combobox"
-                    aria-expanded={addressSuggestOpen}
-                    aria-controls={addressListId}
-                    aria-autocomplete="list"
-                    value={address}
-                    onChange={(e) => {
-                      setAddress(e.target.value);
-                      setAddressCoords(null);
-                    }}
-                    onFocus={() => {
-                      setAddressFieldFocused(true);
-                      if (addressSuggestions.length > 0)
-                        setAddressSuggestOpen(true);
-                    }}
-                    onBlur={() => {
-                      addressBlurTimeout.current = window.setTimeout(() => {
-                        setAddressSuggestOpen(false);
-                        setAddressFieldFocused(false);
-                      }, 180);
-                    }}
-                    onKeyDown={(e) => {
-                      if (!addressSuggestOpen || addressSuggestions.length === 0) {
-                        return;
-                      }
-                      if (e.key === "ArrowDown") {
-                        e.preventDefault();
-                        setAddressHighlight((i) =>
-                          Math.min(i + 1, addressSuggestions.length - 1),
-                        );
-                      } else if (e.key === "ArrowUp") {
-                        e.preventDefault();
-                        setAddressHighlight((i) => Math.max(i - 1, 0));
-                      } else if (e.key === "Enter") {
-                        e.preventDefault();
-                        const f = addressSuggestions[addressHighlight];
-                        if (f) selectAddressSuggestion(f);
-                      } else if (e.key === "Escape") {
-                        setAddressSuggestOpen(false);
-                      }
-                    }}
-                    placeholder="Search for a street or place…"
-                    required
-                    autoComplete="off"
-                    className={`${inputClass} ${addressSuggestLoading ? "pr-10" : ""}`}
-                  />
-                  {addressSuggestLoading && (
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#00E5D1]">
-                      <Loader2
-                        className="h-4 w-4 animate-spin"
-                        aria-hidden
-                        strokeWidth={2}
-                      />
-                    </span>
-                  )}
-                </div>
-                {addressSuggestOpen && addressSuggestions.length > 0 && (
-                  <ul
-                    id={addressListId}
-                    role="listbox"
-                    className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md border border-slate-600/90 bg-[#1a222c] py-1 shadow-lg"
-                  >
-                    {addressSuggestions.map((feature, index) => {
-                      const label = formatPhotonLabel(feature.properties);
-                      const sub = [
-                        feature.properties.city ||
-                          feature.properties.town ||
-                          feature.properties.village,
-                        feature.properties.country,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ");
-                      return (
-                        <li key={`${feature.geometry.coordinates.join(",")}-${index}`} role="option" aria-selected={index === addressHighlight}>
-                          <button
-                            type="button"
-                            className={`flex w-full flex-col gap-0.5 px-3 py-2.5 text-left text-sm transition ${
-                              index === addressHighlight
-                                ? "bg-[#00E5D1]/15 text-[#00E5D1]"
-                                : "text-slate-200 hover:bg-white/5"
-                            }`}
-                            onMouseDown={(ev) => ev.preventDefault()}
-                            onClick={() => selectAddressSuggestion(feature)}
-                            onMouseEnter={() => setAddressHighlight(index)}
-                          >
-                            <span className="font-medium">{label}</span>
-                            {sub ? (
-                              <span className="text-xs text-slate-500">
-                                {sub}
-                              </span>
-                            ) : null}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
+              <AddressAutocompleteInput
+                id="reg-address"
+                label="Address"
+                value={address}
+                onChange={(addr, coords) => {
+                  setAddress(addr);
+                  setAddressCoords(coords);
+                }}
+                required
+                labelClassName={labelClass}
+                inputClassName={inputClass}
+                className="relative"
+              />
 
               <div>
                 <p className={labelClass}>Account type</p>

@@ -1,10 +1,10 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import Navbar from "./components/Navbar";
+import { Footer } from "./components/Footer";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import CreateAccount from "./pages/CreateAccount";
-import ZoneBuilder from "./pages/ZoneBuilder";
 import DeviceManager from "./pages/DeviceManager";
 import Messages from "./pages/Messages";
 import Dashboard from "./pages/Dashboard";
@@ -53,6 +53,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
+        <Footer />
       </div>
     </AuthProvider>
   );
