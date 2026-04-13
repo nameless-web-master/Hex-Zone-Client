@@ -32,8 +32,3 @@ button, input, textarea, select {
 .layer-card {
   @apply rounded-3xl border border-slate-800/70 bg-slate-900/85 p-5 shadow-glow backdrop-blur-xl;
 }
-
-.hexagon-accent {
-  background-image: radial-gradient(circle at 20% 20%, rgba(32, 201, 151, 0.14), transparent 30%),
-    radial-gradient(circle at 80% 80%, rgba(52, 211, 153, 0.08), transparent 18%);
-}

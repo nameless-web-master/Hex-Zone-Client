@@ -45,8 +45,102 @@ export async function fetchMe() {
   return api.get('/owners/me').then((res) => res.data);
 }
 
+/** PATCH /owners/{owner_id} — partial owner update (e.g. active). */
+export interface OwnerUpdatePayload {
+  first_name?: string | null;
+  last_name?: string | null;
+  active?: boolean | null;
+}
+
+export async function updateOwner(ownerId: number | string, payload: OwnerUpdatePayload) {
+  return api.patch(`/owners/${ownerId}`, payload).then((res) => res.data);
+}
+
+/** Owners returned from GET /owners/ (registered accounts in the DB). */
+export interface OwnerListItem {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  account_type?: string;
+  active?: boolean;
+}
+
+export async function fetchOwners(params?: { skip?: number; limit?: number }) {
+  return api.get<OwnerListItem[]>('/owners/', { params }).then((res) => res.data);
+}
+
+/** POST /devices/ — create device (full payload). */
+export interface CreateDevicePayload {
+  hid: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  propagate_enabled: boolean;
+  propagate_radius_km: number;
+  enable_notification: boolean;
+  alert_threshold_meters: number;
+  update_interval_seconds: number;
+}
+
+/** PATCH /devices/{device_id} — update device settings. */
+export interface UpdateDevicePayload {
+  name?: string;
+  address?: string;
+  propagate_enabled?: boolean;
+  propagate_radius_km?: number;
+  enable_notification?: boolean;
+  alert_threshold_meters?: number;
+  update_interval_seconds?: number;
+}
+
+/** Typical device response from list/detail endpoints. */
+export interface DeviceResponse {
+  id: number;
+  hid: string;
+  device_id?: string;
+  name: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string | null;
+  h3_cell_id?: string | null;
+  owner_id?: number;
+  propagate_enabled?: boolean;
+  propagate_radius_km?: number | null;
+  active?: boolean;
+  is_online?: boolean;
+  last_seen?: string | null;
+  enable_notification?: boolean;
+  alert_threshold_meters?: number | null;
+  update_interval_seconds?: number | null;
+  created_at?: string;
+  updated_at?: string | null;
+}
+
+/** Cached device fields in localStorage (offline / fallback). */
+export type CachedDeviceSettings = UpdateDevicePayload & {
+  name?: string;
+};
+
 export async function fetchDevices() {
-  return api.get('/devices/').then((res) => res.data);
+  return api.get<DeviceResponse[]>('/devices/').then((res) => res.data);
+}
+
+export async function fetchDevice(deviceId: number | string) {
+  return api.get<DeviceResponse>(`/devices/${deviceId}`).then((res) => res.data);
+}
+
+export async function createDevice(payload: CreateDevicePayload) {
+  return api.post<DeviceResponse>('/devices/', payload).then((res) => res.data);
+}
+
+export async function updateDevice(deviceId: number | string, payload: UpdateDevicePayload) {
+  return api.patch<DeviceResponse>(`/devices/${deviceId}`, payload).then((res) => res.data);
+}
+
+export async function sendDeviceHeartbeat(deviceId: number | string) {
+  return api.post(`/devices/${deviceId}/heartbeat`).then((res) => res.data);
 }
 
 export async function fetchZones() {
