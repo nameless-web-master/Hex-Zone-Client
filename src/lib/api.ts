@@ -53,8 +53,16 @@ export async function fetchZones() {
   return api.get('/zones/').then((res) => res.data);
 }
 
+export async function fetchZonesByOwner(ownerId: number | string) {
+  return api.get('/zones', { params: { owner_id: ownerId } }).then((res) => res.data);
+}
+
 export async function createZone(payload: any) {
-  return api.post('/zones/', payload).then((res) => res.data);
+  return api.post('/zones', payload).then((res) => res.data);
+}
+
+export async function updateZone(id: number | string, payload: any) {
+  return api.patch(`/zones/${id}`, payload).then((res) => res.data);
 }
 
 export async function convertH3(latitude: number, longitude: number, resolution = 13) {

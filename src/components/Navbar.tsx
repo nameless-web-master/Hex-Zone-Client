@@ -1,10 +1,9 @@
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { Activity, MapPin, Shield, Mail, Terminal } from "lucide-react";
+import { MapPin, Shield, Mail, Terminal } from "lucide-react";
 
 const appRoutes = [
-  { path: "/dashboard", title: "Dashboard", icon: Activity },
-  { path: "/zone-builder", title: "Zone Builder", icon: MapPin },
+  { path: "/dashboard", title: "Dashboard", icon: MapPin },
   { path: "/devices", title: "Devices", icon: Shield },
   { path: "/messages", title: "Messages", icon: Mail },
 ];

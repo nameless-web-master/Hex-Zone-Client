@@ -20,20 +20,12 @@ export default function App() {
     <AuthProvider>
       <div className="min-h-screen bg-slate-950 text-slate-100">
         <Navbar />
-        <main className="mx-auto max-w-7xl px-5 pt-8">
+        <main className="mx-auto max-w-7xl px-5 pt-28">
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<CreateAccount />} />
             <Route path="/api" element={<ApiDocs />} />
-            <Route
-              path="/zone-builder"
-              element={
-                <ProtectedRoute>
-                  <ZoneBuilder />
-                </ProtectedRoute>
-              }
-            />
             <Route
               path="/devices"
               element={
