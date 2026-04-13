@@ -106,7 +106,7 @@ const networkCards = [
 
 export default function Landing() {
   return (
-    <section className="space-y-12 mt-16">
+    <section className="space-y-12">
       <div>
         <div className="grid gap-10 xl:grid-cols-[1.4fr_0.9fr] xl:items-center">
           <div className="space-y-6">
