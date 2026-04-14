@@ -1,19 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { fetchZones } from "../lib/api";
+import { useMemo, useState } from "react";
 import { MessageCircle, Smartphone } from "lucide-react";
-
-interface Zone {
-  id: number;
-  /** Public zone id string from the API (e.g. ZN-4F8A2C), when present. */
-  zone_id?: string | number;
-  name: string;
-  zone_type: string;
-  description?: string;
-}
-
-function zoneKey(zone: Zone): string {
-  return String(zone.zone_id ?? zone.id);
-}
 
 interface MessageItem {
   id: string;
@@ -21,7 +7,7 @@ interface MessageItem {
   time: string;
   sender: string;
   text: string;
-  zoneId: string;
+  senderZoneId: string;
 }
 
 const sampleMessages: MessageItem[] = [
@@ -31,7 +17,7 @@ const sampleMessages: MessageItem[] = [
     time: "01:15 PM",
     sender: "alex.chen",
     text: "Zone perimeter check completed. All sensors nominal.",
-    zoneId: "ZN-4F8A2C",
+    senderZoneId: "ZN-4F8A2C",
   },
   {
     id: "msg-2",
@@ -39,7 +25,7 @@ const sampleMessages: MessageItem[] = [
     time: "01:17 PM",
     sender: "maria.santos",
     text: "Copy that. Moving to sector 7 for sweep.",
-    zoneId: "ZN-4F8A2C",
+    senderZoneId: "ZN-7D2B9F",
   },
   {
     id: "msg-3",
@@ -47,7 +33,7 @@ const sampleMessages: MessageItem[] = [
     time: "01:22 PM",
     sender: "alex.chen",
     text: "Anomaly detected at cell 8a1a2b3c4d6fffff. Investigating.",
-    zoneId: "ZN-4F8A2C",
+    senderZoneId: "ZN-4F8A2C",
   },
   {
     id: "msg-4",
@@ -55,7 +41,7 @@ const sampleMessages: MessageItem[] = [
     time: "01:25 PM",
     sender: "james.kim",
     text: "Standing by for support. Device online.",
-    zoneId: "ZN-4F8A2C",
+    senderZoneId: "ZN-9A6C11",
   },
   {
     id: "msg-5",
@@ -63,42 +49,27 @@ const sampleMessages: MessageItem[] = [
     time: "01:30 PM",
     sender: "maria.santos",
     text: "Returning to base. Sector 7 clear.",
-    zoneId: "ZN-4F8A2C",
+    senderZoneId: "ZN-7D2B9F",
   },
 ];
 
 export default function Messages() {
-  const [zones, setZones] = useState<Zone[]>([]);
   const [activeZone, setActiveZone] = useState<string>("all");
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchZones()
-      .then((zoneData) => setZones(zoneData))
-      .catch(() => setZones([]))
-      .finally(() => setLoading(false));
-  }, []);
 
   const zoneOptions = useMemo(
     () => [
       { id: "all", name: "All zones" },
-      ...zones.map((zone) => ({ id: zoneKey(zone), name: zone.name })),
+      ...Array.from(new Set(sampleMessages.map((m) => m.senderZoneId))).map(
+        (id) => ({ id, name: id }),
+      ),
     ],
-    [zones],
+    [],
   );
-
-  const zoneNameByZoneId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const z of zones) {
-      map.set(zoneKey(z), z.name || "Unnamed zone");
-    }
-    return map;
-  }, [zones]);
 
   const filteredMessages = useMemo(() => {
     return activeZone === "all"
       ? sampleMessages
-      : sampleMessages.filter((message) => message.zoneId === activeZone);
+      : sampleMessages.filter((message) => message.senderZoneId === activeZone);
   }, [activeZone]);
 
   return (
@@ -144,11 +115,7 @@ export default function Messages() {
       </div>
 
       <div className="rounded-[2rem] border border-slate-800/80 bg-slate-950/80 p-6 shadow-glow">
-        {loading ? (
-          <div className="py-12 text-center text-slate-400">
-            Loading messages…
-          </div>
-        ) : filteredMessages.length === 0 ? (
+        {filteredMessages.length === 0 ? (
           <div className="py-12 text-center text-slate-400">
             No messages for the selected zone.
           </div>
@@ -158,9 +125,6 @@ export default function Messages() {
               const showDate =
                 index === 0 ||
                 item.date !== filteredMessages[index - 1]?.date;
-              const zoneLabel =
-                zoneNameByZoneId.get(item.zoneId) ?? item.zoneId;
-
               return (
                 <li key={item.id} className="space-y-4">
                   {showDate ? (
@@ -185,7 +149,7 @@ export default function Messages() {
                         </span>
                         <span className="text-slate-500">{item.time}</span>
                         <span className="font-medium text-[#00E5D1]">
-                          {zoneLabel}
+                          {item.senderZoneId}
                         </span>
                       </div>
                       <p className="text-sm leading-relaxed text-slate-400">

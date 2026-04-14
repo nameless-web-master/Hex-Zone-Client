@@ -18,7 +18,6 @@ import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput
 import { useAuth } from "../hooks/useAuth";
 import { useZones, type SavedZone } from "../hooks/useZones";
 import {
-  generateZoneId,
   getCellFromCoords,
   h3ToPolygon,
   serializeCellCsv,
@@ -298,6 +297,10 @@ function savedZoneId(zone: SavedZone): string {
   return String(zone.zone_id ?? zone.id);
 }
 
+function savedZoneRecordId(zone: SavedZone): string {
+  return String(zone.id);
+}
+
 function polygonKey(p: GeoPolygonShape): string {
   return JSON.stringify([p.outer, p.holes]);
 }
@@ -328,7 +331,7 @@ export default function Dashboard() {
     return n || user.email;
   }, [user]);
 
-  const [zoneId] = useState(() => generateZoneId());
+  const zoneId = useMemo(() => String(user?.zone_id ?? ""), [user?.zone_id]);
   const [zoneName] = useState("Operations Zone");
   const [description] = useState("Zone from dashboard console.");
   const [zoneType] = useState("geofence");
@@ -383,7 +386,7 @@ export default function Dashboard() {
     loading: loadingZones,
     error: zonesError,
     saveZoneWithRebalance,
-  } = useZones(user?.id ?? null);
+  } = useZones(user?.zone_id ?? null);
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -401,11 +404,11 @@ export default function Dashboard() {
     if (zones.length === 0) return;
     const chosen =
       (activeSavedZoneId != null &&
-        zones.find((z) => savedZoneId(z) === String(activeSavedZoneId))) ||
+        zones.find((z) => savedZoneRecordId(z) === String(activeSavedZoneId))) ||
       zones.find((z) => zoneToPolygons(z).length > 0) ||
       zones[0];
     if (!chosen) return;
-    setActiveSavedZoneId(savedZoneId(chosen));
+    setActiveSavedZoneId(savedZoneRecordId(chosen));
     setSelectedCells(
       Array.isArray(chosen.h3_cells) ? [...chosen.h3_cells] : [],
     );
@@ -767,6 +770,10 @@ export default function Dashboard() {
   };
 
   const handleSave = async () => {
+    if (!zoneId) {
+      setSaveStatus("Your account has no zone ID.");
+      return;
+    }
     const canSave = allWorkingCells.length > 0 || allWorkingPolygons.length > 0;
     if (!canSave) {
       setSaveStatus("Select H3 cells or add polygons before saving.");
@@ -775,6 +782,7 @@ export default function Dashboard() {
     setSaveStatus("Saving…");
     try {
       const payload = {
+        zone_id: zoneId,
         name: zoneName,
         description,
         zone_type: zoneType,
@@ -791,7 +799,7 @@ export default function Dashboard() {
   };
 
   const loadSavedZone = useCallback((zone: SavedZone) => {
-    setActiveSavedZoneId(savedZoneId(zone));
+    setActiveSavedZoneId(savedZoneRecordId(zone));
     setSelectedCells(Array.isArray(zone.h3_cells) ? [...zone.h3_cells] : []);
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
@@ -800,6 +808,10 @@ export default function Dashboard() {
   }, []);
 
   const copyZoneId = async () => {
+    if (!zoneId) {
+      setSaveStatus("No zone ID available.");
+      return;
+    }
     try {
       await navigator.clipboard.writeText(zoneId);
       setSaveStatus("Zone ID copied.");
@@ -819,7 +831,7 @@ export default function Dashboard() {
         .map((zone) => {
           const active =
             activeSavedZoneId != null &&
-            savedZoneId(zone) === String(activeSavedZoneId);
+            savedZoneRecordId(zone) === String(activeSavedZoneId);
           const cells = active
             ? selectedCells.filter((c) => !removedCellIds.has(c))
             : Array.isArray(zone.h3_cells)
@@ -830,7 +842,7 @@ export default function Dashboard() {
               : [];
           if (cells.length === 0) return null;
           return {
-            key: `saved-${savedZoneId(zone)}`,
+            key: `saved-${savedZoneRecordId(zone)}`,
             cells,
             color: "#00E5D1",
             fillOpacity: active ? 0.42 : 0.26,
@@ -847,14 +859,14 @@ export default function Dashboard() {
         .map((zone) => {
           const active =
             activeSavedZoneId != null &&
-            savedZoneId(zone) === String(activeSavedZoneId);
+            savedZoneRecordId(zone) === String(activeSavedZoneId);
           const zonePolys = active ? polygons : zoneToPolygons(zone);
           const filtered = zonePolys.filter(
             (p) => !removedPolygonKeys.has(polygonKey(p)),
           );
           if (filtered.length === 0) return null;
           return {
-            key: `poly-${savedZoneId(zone)}`,
+            key: `poly-${savedZoneRecordId(zone)}`,
             polygons: filtered,
             color: "#00E5D1",
             fillOpacity: active ? 0.28 : 0.14,
@@ -1299,9 +1311,10 @@ export default function Dashboard() {
                       {zones.map((zone, idx) => {
                         const isActive =
                           activeSavedZoneId != null &&
-                          String(activeSavedZoneId) === savedZoneId(zone);
+                          String(activeSavedZoneId) ===
+                            savedZoneRecordId(zone);
                         return (
-                          <li key={savedZoneId(zone)}>
+                          <li key={savedZoneRecordId(zone)}>
                             <button
                               type="button"
                               onClick={() => loadSavedZone(zone)}
