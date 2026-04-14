@@ -1,11 +1,12 @@
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { MapPin, Shield, Mail, Terminal } from "lucide-react";
+import { MapPin, Shield, Mail, Terminal, QrCode } from "lucide-react";
 
 const appRoutes = [
   { path: "/dashboard", title: "Dashboard", icon: MapPin },
   { path: "/devices", title: "Devices", icon: Shield },
   { path: "/messages", title: "Messages", icon: Mail },
+  { path: "/qr", title: "QR invite", icon: QrCode },
 ];
 
 export default function Navbar() {

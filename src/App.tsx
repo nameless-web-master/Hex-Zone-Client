@@ -9,6 +9,8 @@ import DeviceManager from "./pages/DeviceManager";
 import Messages from "./pages/Messages";
 import Dashboard from "./pages/Dashboard";
 import ApiDocs from "./pages/ApiDocs";
+import QrInvite from "./pages/QrInvite";
+import JoinWithQr from "./pages/JoinWithQr";
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { token } = useAuth();
@@ -25,6 +27,7 @@ export default function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<CreateAccount />} />
+            <Route path="/join" element={<JoinWithQr />} />
             <Route path="/api" element={<ApiDocs />} />
             <Route
               path="/devices"
@@ -39,6 +42,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Messages />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/qr"
+              element={
+                <ProtectedRoute>
+                  <QrInvite />
                 </ProtectedRoute>
               }
             />

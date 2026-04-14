@@ -1,0 +1,257 @@
+import { FormEvent, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ChevronRight, Eye, EyeOff, QrCode } from "lucide-react";
+import AuthMapPanel from "../components/AuthMapPanel";
+import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
+import { addressToMockCoords, getHexGrid, H3Cell } from "../lib/h3";
+import { joinWithQrToken } from "../lib/api";
+
+const accent = "text-[#00E5D1]";
+const accentBorder = "border-[#00E5D1]/50";
+const accentBg = "bg-[#00E5D1]";
+const panelBg = "bg-[#151a20]";
+const labelClass =
+  "mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500";
+const inputClass = `${panelBg} w-full rounded-md border border-slate-700/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`;
+
+export default function JoinWithQr() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get("token")?.trim() ?? "";
+
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [address, setAddress] = useState("350 Fifth Avenue, New York");
+  const [addressCoords, setAddressCoords] = useState<[number, number] | null>(
+    null,
+  );
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const center = useMemo<[number, number]>(
+    () => addressCoords ?? addressToMockCoords(address),
+    [address, addressCoords],
+  );
+  const grid = useMemo<H3Cell[]>(() => getHexGrid(center, 13, 1), [center]);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+
+    if (!token) {
+      setError("Missing QR invite token. Please scan a valid QR code.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await joinWithQrToken({
+        token,
+        email,
+        password,
+        first_name: firstName,
+        last_name: lastName,
+        address,
+        phone: phone || undefined,
+      });
+      navigate("/login");
+    } catch {
+      setError(
+        "Could not complete registration with this QR invite. The token may be invalid or expired.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="relative left-1/2 w-screen max-w-[100vw] -translate-x-1/2 overflow-x-hidden">
+      <div className="grid min-h-[min(100dvh,960px)] grid-cols-1 lg:grid-cols-2">
+        <AuthMapPanel
+          className="lg:min-h-[min(100dvh,960px)]"
+          center={center}
+          grid={grid}
+          addressLabel={address}
+        />
+
+        <div className="flex flex-col border-t border-slate-800/80 bg-[#0B0E11] lg:border-l lg:border-t-0">
+          <div
+            className={`flex items-center gap-2 border-b px-6 py-3 text-xs ${accent} ${accentBorder} bg-[#00E5D1]/10`}
+          >
+            <QrCode className="h-4 w-4 shrink-0" strokeWidth={2} />
+            <span>Joining via secure QR invite token</span>
+          </div>
+
+          <div className="flex flex-1 flex-col overflow-y-auto px-6 py-8 sm:px-10">
+            <h1 className="text-center text-2xl font-semibold tracking-tight text-white">
+              Join with QR
+            </h1>
+            <p className="mt-2 text-center text-sm text-slate-400">
+              Your zone is selected from the inviter token.
+            </p>
+
+            <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+              <div className="rounded-md border border-slate-700/80 bg-[#151a20] p-4">
+                <p className={labelClass}>Invite token</p>
+                <code className="block break-all rounded-md border border-slate-700/80 bg-[#0f1318] px-3 py-2.5 text-xs text-slate-300">
+                  {token || "No token provided"}
+                </code>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="join-first" className={labelClass}>
+                    First name
+                  </label>
+                  <input
+                    id="join-first"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="Alex"
+                    required
+                    autoComplete="given-name"
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="join-last" className={labelClass}>
+                    Last name
+                  </label>
+                  <input
+                    id="join-last"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Chen"
+                    required
+                    autoComplete="family-name"
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="join-email" className={labelClass}>
+                  Email
+                </label>
+                <input
+                  id="join-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="alex@geozone.io"
+                  required
+                  autoComplete="email"
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="join-phone" className={labelClass}>
+                  Phone (optional)
+                </label>
+                <input
+                  id="join-phone"
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+1 555 0123"
+                  autoComplete="tel"
+                  className={inputClass}
+                />
+              </div>
+
+              <AddressAutocompleteInput
+                id="join-address"
+                label="Address"
+                value={address}
+                onChange={(addr, coords) => {
+                  setAddress(addr);
+                  setAddressCoords(coords);
+                }}
+                required
+                labelClassName={labelClass}
+                inputClassName={inputClass}
+                className="relative"
+              />
+
+              <div>
+                <label htmlFor="join-password" className={labelClass}>
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="join-password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Min 8 characters"
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    className={`${inputClass} pr-11`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((s) => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-slate-300"
+                    aria-label={
+                      showPassword ? "Hide characters" : "Show characters"
+                    }
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" strokeWidth={2} />
+                    ) : (
+                      <Eye className="h-4 w-4" strokeWidth={2} />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || !token}
+                className={`flex w-full items-center justify-center gap-2 rounded-md ${accentBg} py-3.5 text-sm font-bold text-[#0B0E11] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
+              >
+                {loading ? (
+                  "Joining…"
+                ) : (
+                  <>
+                    Join zone &amp; create account
+                    <ChevronRight className="h-4 w-4" strokeWidth={2.5} />
+                  </>
+                )}
+              </button>
+            </form>
+
+            <p className="mt-8 text-center text-sm text-slate-500">
+              Need your own zone?{" "}
+              <Link
+                to="/register"
+                className={`font-medium ${accent} hover:underline`}
+              >
+                Create account
+              </Link>
+              {" · "}
+              <Link
+                to="/login"
+                className={`font-medium ${accent} hover:underline`}
+              >
+                Sign in
+              </Link>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

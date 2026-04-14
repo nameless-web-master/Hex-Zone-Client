@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { createZone, fetchZonesByOwner, updateZone } from "../lib/api";
+import { createZone, fetchZonesByZoneId, updateZone } from "../lib/api";
 
 export type SavedZone = {
   zone_id?: number | string;
@@ -21,13 +21,23 @@ function asCellList(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === "string");
 }
 
-export function useZones(ownerId: number | null) {
+function normalizeZoneId(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function belongsToZone(zone: SavedZone, ownerZoneId: number | string): boolean {
+  const target = normalizeZoneId(ownerZoneId);
+  if (!target) return false;
+  return normalizeZoneId(zone.zone_id ?? zone.id) === target;
+}
+
+export function useZones(ownerZoneId: number | string | null) {
   const [zones, setZones] = useState<SavedZone[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (ownerId == null) {
+    if (ownerZoneId == null || ownerZoneId === "") {
       setZones([]);
       setLoading(false);
       return;
@@ -35,32 +45,38 @@ export function useZones(ownerId: number | null) {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchZonesByOwner(ownerId);
-      setZones(Array.isArray(data) ? (data as SavedZone[]) : []);
+      const data = await fetchZonesByZoneId(ownerZoneId);
+      const allZones = Array.isArray(data) ? (data as SavedZone[]) : [];
+      setZones(allZones.filter((zone) => belongsToZone(zone, ownerZoneId)));
     } catch {
       setError("Could not load saved zones.");
     } finally {
       setLoading(false);
     }
-  }, [ownerId]);
+  }, [ownerZoneId]);
 
   const saveZone = useCallback(
     async (payload: Record<string, unknown>) => {
-      if (ownerId == null) throw new Error("Missing owner id");
-      const saved = await createZone({ ...payload, owner_id: ownerId });
+      if (ownerZoneId == null || ownerZoneId === "") {
+        throw new Error("Missing owner zone id");
+      }
+      const saved = await createZone({ ...payload, zone_id: String(ownerZoneId) });
       await refresh();
       return saved;
     },
-    [ownerId, refresh],
+    [ownerZoneId, refresh],
   );
 
   const saveZoneWithRebalance = useCallback(
     async (payload: Record<string, unknown>) => {
-      if (ownerId == null) throw new Error("Missing owner id");
+      if (ownerZoneId == null || ownerZoneId === "") {
+        throw new Error("Missing owner zone id");
+      }
 
-      const ownerZonesRaw = await fetchZonesByOwner(ownerId);
+      const ownerZonesRaw = await fetchZonesByZoneId(ownerZoneId);
       const ownerZones = Array.isArray(ownerZonesRaw)
         ? (ownerZonesRaw as SavedZone[])
+            .filter((zone) => belongsToZone(zone, ownerZoneId))
         : [];
 
       const incomingCells = asCellList(payload.h3_cells);
@@ -89,7 +105,6 @@ export function useZones(ownerId: number | null) {
           const { id, ...rest } = z;
           return updateZone(getZoneId(zone), {
             ...rest,
-            owner_id: zone.owner_id ?? ownerId,
             h3_cells: nextCells,
           });
         }),
@@ -101,7 +116,7 @@ export function useZones(ownerId: number | null) {
       );
       const toSave = {
         ...payload,
-        owner_id: ownerId,
+        zone_id: String(ownerZoneId),
         h3_cells: filteredNewCells,
       };
       const geoFencePolygon = payload.geo_fence_polygon as
@@ -125,7 +140,7 @@ export function useZones(ownerId: number | null) {
         updatedPreviousZonesCount: updates.length,
       };
     },
-    [ownerId, refresh],
+    [ownerZoneId, refresh],
   );
 
   useEffect(() => {

@@ -14,6 +14,7 @@ interface User {
   first_name: string;
   last_name: string;
   account_type: string;
+  zone_id?: string | number;
   active?: boolean;
 }
 

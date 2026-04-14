@@ -41,6 +41,34 @@ export async function register(payload: RegisterPayload) {
   return api.post('/owners/register', payload).then((res) => res.data);
 }
 
+export interface GenerateQrTokenPayload {
+  zone_id: string;
+}
+
+export interface GenerateQrTokenResponse {
+  token: string;
+  zone_id?: string;
+  expires_at?: string;
+}
+
+export async function generateQrRegistrationToken(payload: GenerateQrTokenPayload) {
+  return api.post<GenerateQrTokenResponse>('/utils/qr/generate', payload).then((res) => res.data);
+}
+
+export interface QrJoinPayload {
+  token: string;
+  email: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  address: string;
+  phone?: string;
+}
+
+export async function joinWithQrToken(payload: QrJoinPayload) {
+  return api.post('/utils/qr/join', payload).then((res) => res.data);
+}
+
 export async function fetchMe() {
   return api.get('/owners/me').then((res) => res.data);
 }
@@ -147,8 +175,8 @@ export async function fetchZones() {
   return api.get('/zones/').then((res) => res.data);
 }
 
-export async function fetchZonesByOwner(ownerId: number | string) {
-  return api.get('/zones', { params: { owner_id: ownerId } }).then((res) => res.data);
+export async function fetchZonesByZoneId(zoneId: number | string) {
+  return api.get('/zones/', { params: { zone_id: zoneId } }).then((res) => res.data);
 }
 
 export async function createZone(payload: any) {
