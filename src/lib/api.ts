@@ -23,11 +23,12 @@ export interface LoginPayload {
 }
 
 export interface RegisterPayload {
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
   email: string;
   password: string;
   first_name: string;
   last_name: string;
-  account_type: 'private' | 'exclusive';
+  account_type: 'private' | 'exclusive' | 'guard';
   phone?: string;
   zone_id?: string;
   address?: string;

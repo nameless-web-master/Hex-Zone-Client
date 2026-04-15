@@ -20,10 +20,11 @@ const labelClass =
 const inputClass = `${panelBg} w-full rounded-md border border-slate-700/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`;
 
 const accountOptions: {
-  value: "private" | "exclusive";
+  value: "private" | "exclusive" | "guard";
   title: string;
   lines: [string, string];
 }[] = [
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
   {
     value: "private",
     title: "Private",
@@ -33,6 +34,11 @@ const accountOptions: {
     value: "exclusive",
     title: "Exclusive",
     lines: ["1 user, 1 device", "Any zone type"],
+  },
+  {
+    value: "guard",
+    title: "Guard Account",
+    lines: ["1 user, 1 device", "Single-zone dashboard behavior"],
   },
 ];
 
@@ -45,7 +51,9 @@ export default function CreateAccount() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [accountType, setAccountType] = useState<"private" | "exclusive">(
+  const [accountType, setAccountType] = useState<
+    "private" | "exclusive" | "guard"
+  >(
     "private",
   );
   const [address, setAddress] = useState("350 Fifth Avenue, New York");

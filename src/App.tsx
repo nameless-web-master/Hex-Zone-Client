@@ -11,6 +11,9 @@ import Dashboard from "./pages/Dashboard";
 import ApiDocs from "./pages/ApiDocs";
 import QrInvite from "./pages/QrInvite";
 import JoinWithQr from "./pages/JoinWithQr";
+// UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
+import AlertPanel from "./pages/AlertPanel";
+import ZoneBuilder from "./pages/ZoneBuilder";
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { token } = useAuth();
@@ -54,10 +57,26 @@ export default function App() {
               }
             />
             <Route
+              path="/alerts"
+              element={
+                <ProtectedRoute>
+                  <AlertPanel />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/dashboard"
               element={
                 <ProtectedRoute>
                   <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/zones"
+              element={
+                <ProtectedRoute>
+                  <ZoneBuilder />
                 </ProtectedRoute>
               }
             />

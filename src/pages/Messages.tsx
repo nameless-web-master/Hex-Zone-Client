@@ -8,9 +8,20 @@ interface MessageItem {
   sender: string;
   text: string;
   senderZoneId: string;
+  messageType:
+    | "PA"
+    | "Private"
+    | "Service"
+    | "Wellness"
+    | "Panic"
+    | "NS Panic"
+    | "Unknown"
+    | "Sensor";
+  unread: boolean;
 }
 
 const sampleMessages: MessageItem[] = [
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
   {
     id: "msg-1",
     date: "Mar 17, 2024",
@@ -18,6 +29,8 @@ const sampleMessages: MessageItem[] = [
     sender: "alex.chen",
     text: "Zone perimeter check completed. All sensors nominal.",
     senderZoneId: "ZN-4F8A2C",
+    messageType: "PA",
+    unread: false,
   },
   {
     id: "msg-2",
@@ -26,6 +39,8 @@ const sampleMessages: MessageItem[] = [
     sender: "maria.santos",
     text: "Copy that. Moving to sector 7 for sweep.",
     senderZoneId: "ZN-7D2B9F",
+    messageType: "Private",
+    unread: true,
   },
   {
     id: "msg-3",
@@ -34,6 +49,8 @@ const sampleMessages: MessageItem[] = [
     sender: "alex.chen",
     text: "Anomaly detected at cell 8a1a2b3c4d6fffff. Investigating.",
     senderZoneId: "ZN-4F8A2C",
+    messageType: "Service",
+    unread: false,
   },
   {
     id: "msg-4",
@@ -42,6 +59,8 @@ const sampleMessages: MessageItem[] = [
     sender: "james.kim",
     text: "Standing by for support. Device online.",
     senderZoneId: "ZN-9A6C11",
+    messageType: "Wellness",
+    unread: false,
   },
   {
     id: "msg-5",
@@ -50,8 +69,51 @@ const sampleMessages: MessageItem[] = [
     sender: "maria.santos",
     text: "Returning to base. Sector 7 clear.",
     senderZoneId: "ZN-7D2B9F",
+    messageType: "Panic",
+    unread: true,
+  },
+  {
+    id: "msg-6",
+    date: "Mar 17, 2024",
+    time: "01:34 PM",
+    sender: "dispatch.core",
+    text: "NS panic escalation broadcasted to all devices.",
+    senderZoneId: "ZN-4F8A2C",
+    messageType: "NS Panic",
+    unread: true,
+  },
+  {
+    id: "msg-7",
+    date: "Mar 17, 2024",
+    time: "01:39 PM",
+    sender: "unknown.device",
+    text: "Unrecognized inbound payload from roaming sender.",
+    senderZoneId: "ZN-9A6C11",
+    messageType: "Unknown",
+    unread: true,
+  },
+  {
+    id: "msg-8",
+    date: "Mar 17, 2024",
+    time: "01:45 PM",
+    sender: "sensor-node-17",
+    text: "Sensor data uploaded: temperature delta 2.3C, motion=true.",
+    senderZoneId: "ZN-7D2B9F",
+    messageType: "Sensor",
+    unread: false,
   },
 ];
+
+const typeStyles: Record<MessageItem["messageType"], string> = {
+  PA: "bg-cyan-500/15 text-cyan-300 border-cyan-500/40",
+  Private: "bg-violet-500/15 text-violet-300 border-violet-500/40",
+  Service: "bg-blue-500/15 text-blue-300 border-blue-500/40",
+  Wellness: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
+  Panic: "bg-red-500/15 text-red-300 border-red-500/40",
+  "NS Panic": "bg-orange-500/15 text-orange-300 border-orange-500/40",
+  Unknown: "bg-amber-500/15 text-amber-300 border-amber-500/40",
+  Sensor: "bg-teal-500/15 text-teal-300 border-teal-500/40",
+};
 
 export default function Messages() {
   const [activeZone, setActiveZone] = useState<string>("all");
@@ -142,7 +204,11 @@ export default function Messages() {
                         aria-hidden
                       />
                     </div>
-                    <div className="min-w-0 flex-1 space-y-2">
+                    <div
+                      className={`min-w-0 flex-1 space-y-2 rounded-xl border-l-2 pl-3 ${
+                        item.unread ? "border-[#00E5D1]" : "border-slate-700/80"
+                      }`}
+                    >
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
                         <span className="font-semibold text-white">
                           {item.sender}
@@ -151,6 +217,16 @@ export default function Messages() {
                         <span className="font-medium text-[#00E5D1]">
                           {item.senderZoneId}
                         </span>
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] ${typeStyles[item.messageType]}`}
+                        >
+                          {item.messageType}
+                        </span>
+                        {item.unread ? (
+                          <span className="rounded-full bg-[#00E5D1]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#00E5D1]">
+                            unread
+                          </span>
+                        ) : null}
                       </div>
                       <p className="text-sm leading-relaxed text-slate-400">
                         {item.text}
