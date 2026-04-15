@@ -47,7 +47,6 @@ const scheduleEvents: ScheduleEvent[] = [
 export default function Dashboard() {
   const { user } = useAuth();
   const isGuard = String(user?.account_type ?? "").toLowerCase() === "guard";
-  const allowedTabs = isGuard ? tabs.filter((t) => t.key !== "zone2" && t.key !== "zone3") : tabs;
 
   const [activeTab, setActiveTab] = useState<DashboardTab>("zone1");
   const [resolution, setResolution] = useState(13);
@@ -75,7 +74,6 @@ export default function Dashboard() {
   );
 
   const switchTab = (tab: DashboardTab) => {
-    if (isGuard && (tab === "zone2" || tab === "zone3")) return;
     setActiveTab(tab);
     slideRefs[tab].current?.scrollIntoView({
       behavior: "smooth",
@@ -99,16 +97,17 @@ export default function Dashboard() {
       </header>
 
       <nav className="flex flex-wrap gap-2">
-        {allowedTabs.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.key}
             type="button"
             onClick={() => switchTab(tab.key)}
+            disabled={isGuard && (tab.key === "zone2" || tab.key === "zone3")}
             className={`rounded-md border px-3 py-2 text-sm transition ${
               activeTab === tab.key
                 ? "border-[#00E5D1] bg-[#00E5D1]/15 text-[#00E5D1]"
                 : "border-slate-700/80 bg-slate-950/80 text-slate-300 hover:border-slate-600"
-            }`}
+            } ${(isGuard && (tab.key === "zone2" || tab.key === "zone3")) ? "cursor-not-allowed opacity-50" : ""}`}
           >
             {tab.label}
           </button>
@@ -116,7 +115,7 @@ export default function Dashboard() {
       </nav>
 
       <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2">
-        {allowedTabs.map((tab) => (
+        {tabs.map((tab) => (
           <article
             key={tab.key}
             ref={slideRefs[tab.key]}
@@ -128,6 +127,8 @@ export default function Dashboard() {
                 selectedEventId={selectedEventId}
                 onSelectEvent={setSelectedEventId}
               />
+            ) : isGuard && (tab.key === "zone2" || tab.key === "zone3") ? (
+              <GuardLockedZonePanel zoneKey={tab.key} />
             ) : (
               <ZonePanel
                 zoneKey={tab.key}
@@ -148,6 +149,20 @@ export default function Dashboard() {
         // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
       </p>
     </section>
+  );
+}
+
+function GuardLockedZonePanel({ zoneKey }: { zoneKey: "zone2" | "zone3" }) {
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-6">
+      {/* UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf */}
+      <h2 className="text-xl font-semibold text-amber-200">
+        {zoneKey === "zone2" ? "Zone 2" : "Zone 3"} Unavailable
+      </h2>
+      <p className="mt-2 text-sm text-amber-100/80">
+        Guard Account supports one active zone only. Use Zone 1 for guard operations and Schedule Access for event handling.
+      </p>
+    </div>
   );
 }
 

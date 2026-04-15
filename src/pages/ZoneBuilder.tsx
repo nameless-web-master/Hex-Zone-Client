@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { createZone } from "../lib/api";
+import { useAuth } from "../hooks/useAuth";
 
 type ZoneTypeKey =
   | "type1_h3"
@@ -81,7 +82,10 @@ const zoneTypeSpecs: ZoneTypeSpec[] = [
 ];
 
 export default function ZoneBuilder() {
+  const { user } = useAuth();
+  const isGuard = String(user?.account_type ?? "").toLowerCase() === "guard";
   const [selectedType, setSelectedType] = useState<ZoneTypeKey>("type1_h3");
+  const [zoneSlot, setZoneSlot] = useState<"zone1" | "zone2" | "zone3">("zone1");
   const [zoneName, setZoneName] = useState("Operations Zone");
   const [description, setDescription] = useState("Zone flow configured from v1.1 summary.");
   const [communalId, setCommunalId] = useState("");
@@ -104,6 +108,7 @@ export default function ZoneBuilder() {
       const payload: Record<string, unknown> = {
         name: zoneName,
         description,
+        zone_slot: zoneSlot,
         zone_type: selectedType,
         communal_id: communalId || undefined,
         government_code: governmentCode || undefined,
@@ -127,6 +132,12 @@ export default function ZoneBuilder() {
         <h1 className="mt-2 text-3xl font-semibold text-white">8 Type-Specific Flows</h1>
         <p className="mt-3 text-sm text-slate-400">
           Select one of the eight zone types and follow the exact flow steps from the v1.1 summary.
+        </p>
+        <p className="mt-2 text-sm text-slate-400">
+          {/* UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf */}
+          {isGuard
+            ? "Guard Account configuration: one active zone (Zone 1)."
+            : "Private / Exclusive accounts can configure up to three zones."}
         </p>
 
         <div className="mt-5 grid gap-2 md:grid-cols-2">
@@ -155,6 +166,22 @@ export default function ZoneBuilder() {
             <li key={step}>{step}</li>
           ))}
         </ol>
+
+        <label className="block text-sm text-slate-300">
+          Zone slot
+          <select
+            value={zoneSlot}
+            onChange={(event) =>
+              setZoneSlot(event.target.value as "zone1" | "zone2" | "zone3")
+            }
+            className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
+            disabled={isGuard}
+          >
+            <option value="zone1">Zone 1</option>
+            {!isGuard ? <option value="zone2">Zone 2</option> : null}
+            {!isGuard ? <option value="zone3">Zone 3</option> : null}
+          </select>
+        </label>
 
         <label className="block text-sm text-slate-300">
           Zone name

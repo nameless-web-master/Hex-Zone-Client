@@ -20,6 +20,8 @@ interface MessageItem {
   unread: boolean;
 }
 
+type MessageTab = "all" | "by_zone" | "by_type";
+
 const sampleMessages: MessageItem[] = [
   // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
   {
@@ -116,7 +118,10 @@ const typeStyles: Record<MessageItem["messageType"], string> = {
 };
 
 export default function Messages() {
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
+  const [activeTab, setActiveTab] = useState<MessageTab>("all");
   const [activeZone, setActiveZone] = useState<string>("all");
+  const [activeType, setActiveType] = useState<string>("all");
 
   const zoneOptions = useMemo(
     () => [
@@ -129,10 +134,30 @@ export default function Messages() {
   );
 
   const filteredMessages = useMemo(() => {
-    return activeZone === "all"
-      ? sampleMessages
-      : sampleMessages.filter((message) => message.senderZoneId === activeZone);
-  }, [activeZone]);
+    const byZone =
+      activeZone === "all"
+        ? sampleMessages
+        : sampleMessages.filter((message) => message.senderZoneId === activeZone);
+    const byType =
+      activeType === "all"
+        ? sampleMessages
+        : sampleMessages.filter((message) => message.messageType === activeType);
+
+    if (activeTab === "by_zone") return byZone;
+    if (activeTab === "by_type") return byType;
+    return sampleMessages;
+  }, [activeTab, activeType, activeZone]);
+
+  const typeOptions = useMemo(
+    () => [
+      { id: "all", name: "All types" },
+      ...Array.from(new Set(sampleMessages.map((m) => m.messageType))).map((type) => ({
+        id: type,
+        name: type,
+      })),
+    ],
+    [],
+  );
 
   return (
     <section className="space-y-8 p-8">
@@ -154,25 +179,88 @@ export default function Messages() {
         <h1 className="text-2xl font-semibold text-white sm:text-3xl">
           In-Zone Messages
         </h1>
-        <div className="sm:text-right">
-          <label
-            htmlFor="messages-zone-filter"
-            className="mb-2 block text-xs font-medium uppercase tracking-[0.3em] text-slate-500"
-          >
-            Filter zone
-          </label>
-          <select
-            id="messages-zone-filter"
-            value={activeZone}
-            onChange={(event) => setActiveZone(event.target.value)}
-            className="w-full min-w-[12rem] rounded-md border border-[#00E5D1]/45 bg-slate-950/90 px-4 py-2.5 text-sm font-medium text-slate-100 shadow-glow outline-none transition hover:border-[#00E5D1]/70 focus:border-[#00E5D1] focus:ring-1 focus:ring-[#00E5D1]/40 sm:w-auto"
-          >
-            {zoneOptions.map((zone) => (
-              <option key={zone.id} value={zone.id}>
-                {zone.name}
-              </option>
-            ))}
-          </select>
+        <div className="space-y-2 sm:text-right">
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab("all")}
+              className={`rounded-md border px-3 py-2 text-xs uppercase tracking-[0.15em] ${
+                activeTab === "all"
+                  ? "border-[#00E5D1]/70 bg-[#00E5D1]/10 text-[#00E5D1]"
+                  : "border-slate-700/80 bg-slate-950/80 text-slate-300"
+              }`}
+            >
+              All Messages
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("by_zone")}
+              className={`rounded-md border px-3 py-2 text-xs uppercase tracking-[0.15em] ${
+                activeTab === "by_zone"
+                  ? "border-[#00E5D1]/70 bg-[#00E5D1]/10 text-[#00E5D1]"
+                  : "border-slate-700/80 bg-slate-950/80 text-slate-300"
+              }`}
+            >
+              By Zone
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("by_type")}
+              className={`rounded-md border px-3 py-2 text-xs uppercase tracking-[0.15em] ${
+                activeTab === "by_type"
+                  ? "border-[#00E5D1]/70 bg-[#00E5D1]/10 text-[#00E5D1]"
+                  : "border-slate-700/80 bg-slate-950/80 text-slate-300"
+              }`}
+            >
+              By Type
+            </button>
+          </div>
+
+          {activeTab === "by_zone" ? (
+            <div>
+              <label
+                htmlFor="messages-zone-filter"
+                className="mb-2 block text-xs font-medium uppercase tracking-[0.3em] text-slate-500"
+              >
+                Filter zone
+              </label>
+              <select
+                id="messages-zone-filter"
+                value={activeZone}
+                onChange={(event) => setActiveZone(event.target.value)}
+                className="w-full min-w-[12rem] rounded-md border border-[#00E5D1]/45 bg-slate-950/90 px-4 py-2.5 text-sm font-medium text-slate-100 shadow-glow outline-none transition hover:border-[#00E5D1]/70 focus:border-[#00E5D1] focus:ring-1 focus:ring-[#00E5D1]/40 sm:w-auto"
+              >
+                {zoneOptions.map((zone) => (
+                  <option key={zone.id} value={zone.id}>
+                    {zone.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          {activeTab === "by_type" ? (
+            <div>
+              <label
+                htmlFor="messages-type-filter"
+                className="mb-2 block text-xs font-medium uppercase tracking-[0.3em] text-slate-500"
+              >
+                Filter type
+              </label>
+              <select
+                id="messages-type-filter"
+                value={activeType}
+                onChange={(event) => setActiveType(event.target.value)}
+                className="w-full min-w-[12rem] rounded-md border border-[#00E5D1]/45 bg-slate-950/90 px-4 py-2.5 text-sm font-medium text-slate-100 shadow-glow outline-none transition hover:border-[#00E5D1]/70 focus:border-[#00E5D1] focus:ring-1 focus:ring-[#00E5D1]/40 sm:w-auto"
+              >
+                {typeOptions.map((type) => (
+                  <option key={type.id} value={type.id}>
+                    {type.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         </div>
       </div>
 
