@@ -17,6 +17,7 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -31,7 +32,7 @@ export default function Login() {
     setLoading(true);
 
     try {
-      await login(email, password);
+      await login(email, password, { rememberMe });
       navigate("/dashboard");
     } catch {
       setError("Login failed. Check your credentials and try again.");
@@ -124,6 +125,16 @@ export default function Login() {
                   {error}
                 </p>
               )}
+
+              <label className="flex items-center gap-2 text-sm text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="accent-[#00E5D1]"
+                />
+                Remember me
+              </label>
 
               <button
                 type="submit"

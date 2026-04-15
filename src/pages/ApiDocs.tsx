@@ -387,7 +387,7 @@ export default function ApiDocs() {
 
   const zoneLabel = useMemo(() => {
     if (user?.id != null) {
-      const hex = user.id.toString(16).toUpperCase().padStart(6, "0");
+      const hex = Number(user.id).toString(16).toUpperCase().padStart(6, "0");
       return `ZN-${hex.slice(-6)}`;
     }
     return "ZN-4F8A2C";

@@ -1,0 +1,132 @@
+import { clearStoredToken, persistToken, request } from "./client";
+
+export type AccountType = "PRIVATE" | "EXCLUSIVE";
+
+export type AuthUser = {
+  id: string;
+  name: string;
+  accountType: AccountType;
+  email?: string;
+  zoneId?: string;
+  first_name?: string;
+  last_name?: string;
+  zone_id?: string | number;
+  account_type?: string;
+};
+
+export type LoginPayload = {
+  email: string;
+  password: string;
+};
+
+export type RegisterPayload = {
+  name: string;
+  email: string;
+  password: string;
+  accountType: AccountType;
+  zoneId?: string;
+  phone?: string;
+  address?: string;
+};
+
+type LoginResponse = {
+  token: string;
+  user: AuthUser;
+};
+
+type LegacyLoginResponse = {
+  access_token?: string;
+  token?: string;
+  user?: AuthUser;
+};
+
+type LegacyRegisterPayload = {
+  email: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  account_type: "private" | "exclusive";
+  zone_id?: string;
+  phone?: string;
+  address?: string;
+};
+
+function mapLegacyRegisterPayload(payload: RegisterPayload): LegacyRegisterPayload {
+  const [first, ...rest] = payload.name.trim().split(/\s+/);
+  const last = rest.join(" ");
+  return {
+    email: payload.email,
+    password: payload.password,
+    first_name: first || payload.name,
+    last_name: last,
+    account_type: payload.accountType.toLowerCase() as "private" | "exclusive",
+    zone_id: payload.zoneId,
+    phone: payload.phone,
+    address: payload.address,
+  };
+}
+
+function normalizeLoginData(
+  data: LoginResponse | LegacyLoginResponse | null,
+): LoginResponse | null {
+  if (!data) return null;
+  const row = data as LoginResponse & LegacyLoginResponse;
+  const token = row.token || row.access_token;
+  if (!token) return null;
+  return {
+    token,
+    user:
+      row.user ??
+      ({
+        id: "",
+        name: "",
+        accountType: "PRIVATE",
+      } as AuthUser),
+  };
+}
+
+export async function login(payload: LoginPayload, rememberMe = true) {
+  const primary = await request<LoginResponse>({
+    method: "POST",
+    url: "/login",
+    data: payload,
+  });
+  const primaryData = normalizeLoginData(primary.data);
+  if (primaryData?.token) {
+    persistToken(primaryData.token, rememberMe);
+    return { ...primary, data: primaryData };
+  }
+  const legacy = await request<LegacyLoginResponse>({
+    method: "POST",
+    url: "/owners/login",
+    data: payload,
+  });
+  const legacyData = normalizeLoginData(legacy.data);
+  if (legacyData?.token) {
+    persistToken(legacyData.token, rememberMe);
+    return { ...legacy, data: legacyData };
+  }
+  return {
+    data: null,
+    error: primary.error || legacy.error || "Login failed",
+    loading: false,
+  };
+}
+
+export async function register(payload: RegisterPayload) {
+  const primary = await request<{ id?: string }>({
+    method: "POST",
+    url: "/register",
+    data: payload,
+  });
+  if (!primary.error) return primary;
+  return request<{ id?: string }>({
+    method: "POST",
+    url: "/owners/register",
+    data: mapLegacyRegisterPayload(payload),
+  });
+}
+
+export function logout() {
+  clearStoredToken();
+}

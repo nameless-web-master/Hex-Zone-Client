@@ -7,6 +7,7 @@ import {
   Polygon,
   Polyline,
   TileLayer,
+  Tooltip,
   useMap,
   useMapEvent,
 } from "react-leaflet";
@@ -317,10 +318,37 @@ export default function HexMapperMap({
               <CircleMarker
                 key={`d-${i}-${lat}-${lng}`}
                 center={[lat, lng]}
-                radius={5}
+                radius={i === 0 ? 8 : 5}
                 pathOptions={{ color: draftLineColor, fillColor: "#0B0E11", weight: 2 }}
               />
             ))}
+            {drawingActive && interactionMode === "polygon" && draftRing.length >= 3 && (
+              <CircleMarker
+                center={[draftRing[0][0], draftRing[0][1]]}
+                radius={14}
+                bubblingMouseEvents={false}
+                pathOptions={{
+                  color: draftLineColor,
+                  fillColor: draftLineColor,
+                  fillOpacity: 0.32,
+                  weight: 2,
+                }}
+                eventHandlers={{
+                  click: (e) => {
+                    L.DomEvent.stopPropagation(e.originalEvent);
+                    e.originalEvent.stopImmediatePropagation?.();
+                    e.originalEvent.preventDefault();
+                    e.originalEvent.stopPropagation();
+                    const [lat, lng] = draftRing[0];
+                    onMapClick(lat, lng);
+                  },
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -8]} opacity={1}>
+                  Click to close polygon
+                </Tooltip>
+              </CircleMarker>
+            )}
           </>
         )}
 

@@ -3,8 +3,10 @@ import {
   MapContainer,
   TileLayer,
   Polygon,
+  Polyline,
   Popup,
   Tooltip,
+  CircleMarker,
   useMap,
   useMapEvent,
 } from "react-leaflet";
@@ -79,6 +81,15 @@ export default function ZoneBuilderMap({
   darkBasemap = false,
   interactive = true,
 }: ZoneBuilderMapProps) {
+  const polygonIsClosed =
+    polygonPoints.length >= 4 &&
+    Math.abs(polygonPoints[0][0] - polygonPoints[polygonPoints.length - 1][0]) < 1e-7 &&
+    Math.abs(polygonPoints[0][1] - polygonPoints[polygonPoints.length - 1][1]) < 1e-7;
+
+  const openPolygonPoints = polygonIsClosed
+    ? polygonPoints.slice(0, polygonPoints.length - 1)
+    : polygonPoints;
+
   const hexGrid = useMemo<H3Cell[]>(
     () => getHexGrid(center, resolution, 2),
     [center, resolution],
@@ -151,7 +162,7 @@ export default function ZoneBuilderMap({
             </Polygon>
           );
         })}
-        {polygonPoints.length > 0 && (
+        {polygonPoints.length >= 3 && (
           <Polygon
             positions={polygonPoints.map(
               ([lat, lng]) => [lat, lng] as [number, number],
@@ -163,6 +174,35 @@ export default function ZoneBuilderMap({
               fillOpacity: 0.12,
             }}
           />
+        )}
+        {polygonPoints.length > 1 && !polygonIsClosed && (
+          <Polyline
+            positions={polygonPoints.map(
+              ([lat, lng]) => [lat, lng] as [number, number],
+            )}
+            pathOptions={{
+              color: selectedColor,
+              weight: 3,
+              dashArray: "8 6",
+              opacity: 0.95,
+            }}
+          />
+        )}
+        {mode === "polygon" && interactive && openPolygonPoints.length > 0 && (
+          <CircleMarker
+            center={openPolygonPoints[0]}
+            radius={12}
+            pathOptions={{
+              color: selectedColor,
+              weight: 2,
+              fillColor: selectedColor,
+              fillOpacity: 0.35,
+            }}
+          >
+            <Tooltip direction="top" offset={[0, -8]} opacity={1}>
+              Click here to close polygon
+            </Tooltip>
+          </CircleMarker>
         )}
         <MapClickHandler
           mode={mode}

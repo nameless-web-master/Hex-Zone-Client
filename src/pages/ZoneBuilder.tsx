@@ -5,6 +5,33 @@ import { buildZonePayload, polygonAreaKm2, serializeCellCsv } from '../lib/h3';
 import { createZone } from '../lib/api';
 
 const zoneTypes = ['warn', 'alert', 'geofence', 'emergency', 'restricted', 'custom_1', 'custom_2'];
+const CLOSE_DISTANCE_METERS = 35;
+
+function toRad(value: number) {
+  return (value * Math.PI) / 180;
+}
+
+function distanceMeters(a: [number, number], b: [number, number]) {
+  const earthRadius = 6371000;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const hav =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+
+  return 2 * earthRadius * Math.atan2(Math.sqrt(hav), Math.sqrt(1 - hav));
+}
+
+function pointsEqual(a: [number, number], b: [number, number]) {
+  return Math.abs(a[0] - b[0]) < 1e-7 && Math.abs(a[1] - b[1]) < 1e-7;
+}
+
+function isClosedPolygon(points: [number, number][]) {
+  if (points.length < 4) return false;
+  return pointsEqual(points[0], points[points.length - 1]);
+}
 
 export default function ZoneBuilder() {
   const [resolution, setResolution] = useState(13);
@@ -25,7 +52,19 @@ export default function ZoneBuilder() {
   };
 
   const handlePolygonAddPoint = (point: [number, number]) => {
-    setPolygonPoints((current) => [...current, point]);
+    setPolygonPoints((current) => {
+      if (current.length === 0) return [point];
+      if (isClosedPolygon(current)) return current;
+
+      const first = current[0];
+      const isNearStart = current.length >= 3 && distanceMeters(point, first) <= CLOSE_DISTANCE_METERS;
+
+      if (isNearStart) {
+        return [...current, first];
+      }
+
+      return [...current, point];
+    });
   };
 
   const handlePolygonReset = () => {

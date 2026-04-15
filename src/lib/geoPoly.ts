@@ -57,7 +57,7 @@ export function distanceMeters(a: LatLng, b: LatLng): number {
 export function ringsNearlyClosed(
   ring: LatLng[],
   click: LatLng,
-  maxM = 35,
+  maxM = 85,
 ): boolean {
   if (ring.length < 3) return false;
   return distanceMeters(click, ring[0]) <= maxM;

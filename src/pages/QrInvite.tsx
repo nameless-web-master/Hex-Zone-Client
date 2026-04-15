@@ -10,7 +10,7 @@ export default function QrInvite() {
   const [joinToken, setJoinToken] = useState("");
   const [loadingToken, setLoadingToken] = useState(false);
   const [tokenError, setTokenError] = useState("");
-  const userZoneId = String(user?.zone_id ?? "");
+  const userZoneId = String(user?.zone_id ?? user?.zoneId ?? "");
 
   const joinUrl = useMemo(() => {
     if (!joinToken) return "";

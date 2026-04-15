@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as turf from "@turf/turf";
-import {
-  Copy,
-  Download,
-  MapPin,
-  Ruler,
-  Trash2,
-  Upload,
-} from "lucide-react";
+import { Copy, Download, MapPin, Ruler, Trash2, Upload } from "lucide-react";
 import HexMapperMap, {
   h3CellsAtPoint,
   type MapFitBoundsRequest,
   type SavedZoneCellLayer,
   type SavedZonePolygonLayer,
 } from "../components/HexMapperMap";
+import {
+  DashboardTabs,
+  type DashboardTab,
+} from "../components/dashboard/DashboardTabs";
 import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
 import { useAuth } from "../hooks/useAuth";
 import { useZones, type SavedZone } from "../hooks/useZones";
@@ -325,13 +322,14 @@ function geoPolygonAreaKm2(p: GeoPolygonShape): number {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const userZoneId = user?.zone_id ?? user?.zoneId ?? null;
   const userLabel = useMemo(() => {
     if (!user) return "—";
     const n = `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim();
     return n || user.email;
   }, [user]);
 
-  const zoneId = useMemo(() => String(user?.zone_id ?? ""), [user?.zone_id]);
+  const zoneId = useMemo(() => String(userZoneId ?? ""), [userZoneId]);
   const [zoneName] = useState("Operations Zone");
   const [description] = useState("Zone from dashboard console.");
   const [zoneType] = useState("geofence");
@@ -369,6 +367,8 @@ export default function Dashboard() {
   );
 
   const [locationQuery, setLocationQuery] = useState("");
+  const [activeSidebarTab, setActiveSidebarTab] =
+    useState<DashboardTab>("zones");
 
   const [pasteText, setPasteText] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
@@ -386,7 +386,7 @@ export default function Dashboard() {
     loading: loadingZones,
     error: zonesError,
     saveZoneWithRebalance,
-  } = useZones(user?.zone_id ?? null);
+  } = useZones(userZoneId);
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -404,7 +404,9 @@ export default function Dashboard() {
     if (zones.length === 0) return;
     const chosen =
       (activeSavedZoneId != null &&
-        zones.find((z) => savedZoneRecordId(z) === String(activeSavedZoneId))) ||
+        zones.find(
+          (z) => savedZoneRecordId(z) === String(activeSavedZoneId),
+        )) ||
       zones.find((z) => zoneToPolygons(z).length > 0) ||
       zones[0];
     if (!chosen) return;
@@ -956,6 +958,13 @@ export default function Dashboard() {
       <div className="flex min-h-[min(100dvh,920px)] flex-1 flex-col lg:min-h-[calc(100dvh-11rem)] lg:flex-row">
         <aside className="flex w-full flex-col border-slate-800/80 lg:w-[400px] lg:shrink-0 lg:border-r">
           <div className="max-h-[50vh] flex-1 space-y-4 overflow-y-auto p-4 sm:p-5 lg:max-h-none">
+            <DashboardTabs
+              activeTab={activeSidebarTab}
+              onChange={setActiveSidebarTab}
+            />
+            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+              Active tab: {activeSidebarTab}
+            </p>
             <div>
               <p className={labelClass}>Zone ID</p>
               <div className="flex gap-2">
@@ -1311,8 +1320,7 @@ export default function Dashboard() {
                       {zones.map((zone, idx) => {
                         const isActive =
                           activeSavedZoneId != null &&
-                          String(activeSavedZoneId) ===
-                            savedZoneRecordId(zone);
+                          String(activeSavedZoneId) === savedZoneRecordId(zone);
                         return (
                           <li key={savedZoneRecordId(zone)}>
                             <button
@@ -1493,7 +1501,7 @@ export default function Dashboard() {
             savedZonePolygonLayers={savedZonePolygonLayers}
             h3Color={h3Color}
             h3FillOpacity={h3FillOpacity}
-            polygons={[]}
+            polygons={polygons}
             polygonColor={polygonColor}
             polygonFillOpacity={polygonFillOpacity}
             draftRing={draftRing}

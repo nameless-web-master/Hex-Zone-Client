@@ -8,9 +8,11 @@ import CreateAccount from "./pages/CreateAccount";
 import DeviceManager from "./pages/DeviceManager";
 import Messages from "./pages/Messages";
 import Dashboard from "./pages/Dashboard";
+import Members from "./pages/Members";
 import ApiDocs from "./pages/ApiDocs";
 import QrInvite from "./pages/QrInvite";
 import JoinWithQr from "./pages/JoinWithQr";
+import { AppStateProvider } from "./state/app/AppStateContext";
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { token } = useAuth();
@@ -20,10 +22,11 @@ function ProtectedRoute({ children }: { children: JSX.Element }) {
 export default function App() {
   return (
     <AuthProvider>
-      <div className="min-h-screen bg-slate-950 text-slate-100">
-        <Navbar />
-        <main className="mx-auto max-w-7xl px-5 pt-28">
-          <Routes>
+      <AppStateProvider>
+        <div className="min-h-screen bg-slate-950 text-slate-100">
+          <Navbar />
+          <main className="mx-auto max-w-7xl px-5 pt-28">
+            <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<CreateAccount />} />
@@ -46,6 +49,14 @@ export default function App() {
               }
             />
             <Route
+              path="/members"
+              element={
+                <ProtectedRoute>
+                  <Members />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/qr"
               element={
                 <ProtectedRoute>
@@ -62,10 +73,11 @@ export default function App() {
               }
             />
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </main>
-        <Footer />
-      </div>
+            </Routes>
+          </main>
+          <Footer />
+        </div>
+      </AppStateProvider>
     </AuthProvider>
   );
 }
