@@ -1,11 +1,15 @@
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { MapPin, Shield, Mail, Terminal, QrCode } from "lucide-react";
+import { MapPin, Shield, Mail, Terminal, QrCode, Bell, Grid2x2 } from "lucide-react";
 
+// UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
 const appRoutes = [
   { path: "/dashboard", title: "Dashboard", icon: MapPin },
+  { path: "/zones", title: "Zone Builder", icon: Grid2x2 },
   { path: "/devices", title: "Devices", icon: Shield },
   { path: "/messages", title: "Messages", icon: Mail },
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
+  { path: "/alerts", title: "Alerts", icon: Bell },
   { path: "/qr", title: "QR invite", icon: QrCode },
 ];
 

@@ -22,7 +22,8 @@ interface AuthContextValue {
   user: User | null;
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (payload: { email: string; password: string; first_name: string; last_name: string; account_type: 'private' | 'exclusive'; phone?: string; zone_id?: string; address?: string }) => Promise<void>;
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
+  register: (payload: { email: string; password: string; first_name: string; last_name: string; account_type: 'private' | 'exclusive' | 'guard'; phone?: string; zone_id?: string; address?: string }) => Promise<void>;
   logout: () => void;
 }
 
@@ -66,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(refreshed);
   };
 
-  const register = async (payload: { email: string; password: string; first_name: string; last_name: string; account_type: 'private' | 'exclusive'; phone?: string; zone_id?: string; address?: string }) => {
+  const register = async (payload: { email: string; password: string; first_name: string; last_name: string; account_type: 'private' | 'exclusive' | 'guard'; phone?: string; zone_id?: string; address?: string }) => {
     await registerRequest(payload);
   };
 

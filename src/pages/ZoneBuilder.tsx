@@ -1,246 +1,270 @@
-import { useMemo, useState } from 'react';
-import { ArrowDownRight, Download, Square, Upload, Zap } from 'lucide-react';
-import ZoneBuilderMap from '../components/ZoneBuilderMap';
-import { buildZonePayload, polygonAreaKm2, serializeCellCsv } from '../lib/h3';
-import { createZone } from '../lib/api';
+import { useMemo, useState } from "react";
+import { createZone } from "../lib/api";
 
-const zoneTypes = ['warn', 'alert', 'geofence', 'emergency', 'restricted', 'custom_1', 'custom_2'];
+type ZoneTypeKey =
+  | "type1_h3"
+  | "type2_communal"
+  | "type3_gov_code"
+  | "type4_object"
+  | "type5_grid"
+  | "type6_geo_fence"
+  | "type7_proximity"
+  | "type8_dynamic";
+
+type ZoneTypeSpec = {
+  key: ZoneTypeKey;
+  title: string;
+  steps: string[];
+  helper: string;
+};
+
+const zoneTypeSpecs: ZoneTypeSpec[] = [
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
+  {
+    key: "type1_h3",
+    title: "Type 1 - H3 Hex Grid Zoning",
+    helper: "Select hex cells, adjust resolution (default 13), then save cell IDs.",
+    steps: [
+      "Step 1: Map + Hex Overlay",
+      "Step 2: Cell Selection",
+      "Step 3: Resolution Adjustment",
+      "Step 4: Name and Save",
+    ],
+  },
+  {
+    key: "type2_communal",
+    title: "Type 2 - Zone Matching (Communal ID)",
+    helper: "Enter communal ID, validate with API, preview geometry, confirm save.",
+    steps: ["Step 1: Input Communal ID", "Step 2: Validate via REST API", "Step 3: Confirm and Save"],
+  },
+  {
+    key: "type3_gov_code",
+    title: "Type 3 - Zone Matching (Governmental Local Code)",
+    helper: "Use postal/district code and run the same validate + confirm flow as Type 2.",
+    steps: ["Step 1: Input Government Code", "Step 2: Validate via REST API", "Step 3: Confirm and Save"],
+  },
+  {
+    key: "type4_object",
+    title: "Type 4 - Object Zoning",
+    helper: "Associate zone with object ID and radius; server tracks moving boundary.",
+    steps: ["Step 1: Object Search/Select", "Step 2: Radius Definition", "Step 3: Save"],
+  },
+  {
+    key: "type5_grid",
+    title: "Type 5 - Grid Zoning",
+    helper: "Select rectangular grid cells (similar to H3 flow but square grid).",
+    steps: ["Step 1: Show Grid Overlay", "Step 2: Select Grid Cells", "Step 3: Name and Save"],
+  },
+  {
+    key: "type6_geo_fence",
+    title: "Type 6 - Geo-fence Zoning",
+    helper: "Draw polygon/circle, edit vertices, then save coordinates.",
+    steps: [
+      "Step 1: Drawing Mode Toggle",
+      "Step 2: Draw on Map",
+      "Step 3: Edit Handles",
+      "Step 4: Name and Save",
+    ],
+  },
+  {
+    key: "type7_proximity",
+    title: "Type 7 - Proximity-to-Source Zoning",
+    helper: "Set source and radius with live preview, then save source+radius.",
+    steps: ["Step 1: Source Selection", "Step 2: Radius Input", "Step 3: Live Preview", "Step 4: Save"],
+  },
+  {
+    key: "type8_dynamic",
+    title: "Type 8 - Dynamic-Size Zoning",
+    helper: "Configure member-count/time trigger and min/max radius bounds.",
+    steps: ["Step 1: Dynamic Parameters", "Step 2: Preview Min/Max Extents", "Step 3: Save Rules"],
+  },
+];
 
 export default function ZoneBuilder() {
-  const [resolution, setResolution] = useState(13);
-  const [mode, setMode] = useState<'hex' | 'polygon'>('hex');
-  const [selectedColor, setSelectedColor] = useState('#20c997');
-  const [selectedCells, setSelectedCells] = useState<string[]>([]);
-  const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
-  const [zoneName, setZoneName] = useState('Downtown Grid');
-  const [description, setDescription] = useState('Core geofence coverage around the operational area.');
-  const [zoneType, setZoneType] = useState('warn');
-  const [status, setStatus] = useState('');
+  const [selectedType, setSelectedType] = useState<ZoneTypeKey>("type1_h3");
+  const [zoneName, setZoneName] = useState("Operations Zone");
+  const [description, setDescription] = useState("Zone flow configured from v1.1 summary.");
+  const [communalId, setCommunalId] = useState("");
+  const [governmentCode, setGovernmentCode] = useState("");
+  const [objectId, setObjectId] = useState("");
+  const [radiusMeters, setRadiusMeters] = useState(500);
+  const [sourceMode, setSourceMode] = useState("originator");
+  const [dynamicMembers, setDynamicMembers] = useState(12);
+  const [dynamicTimeMinutes, setDynamicTimeMinutes] = useState(20);
+  const [status, setStatus] = useState("");
 
-  const areaKm2 = useMemo(() => polygonAreaKm2(polygonPoints), [polygonPoints]);
-  const canSave = selectedCells.length > 0 || polygonPoints.length > 0;
+  const selectedSpec = useMemo(
+    () => zoneTypeSpecs.find((spec) => spec.key === selectedType) ?? zoneTypeSpecs[0],
+    [selectedType],
+  );
 
-  const handleCellToggle = (cell: string) => {
-    setSelectedCells((current) => (current.includes(cell) ? current.filter((item) => item !== cell) : [...current, cell]));
-  };
-
-  const handlePolygonAddPoint = (point: [number, number]) => {
-    setPolygonPoints((current) => [...current, point]);
-  };
-
-  const handlePolygonReset = () => {
-    setPolygonPoints([]);
-  };
-
-  const handleExportJson = () => {
-    const payload = {
-      name: zoneName,
-      description,
-      zone_type: zoneType,
-      h3_cells: selectedCells,
-      polygon: polygonPoints
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'zone-export.json';
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleExportCsv = () => {
-    const csv = serializeCellCsv(selectedCells);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'zone-cells.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleSave = async () => {
-    if (!zoneName.trim() || !canSave) {
-      setStatus('Add cells or draw a polygon before saving a zone.');
-      return;
-    }
-    setStatus('Saving zone…');
+  const saveZone = async () => {
+    setStatus("Saving zone...");
     try {
-      await createZone(buildZonePayload(zoneName, description, zoneType, selectedCells, polygonPoints));
-      setStatus('Zone saved successfully!');
-    } catch (error) {
-      setStatus('Failed to save zone. Ensure you are logged in and try again.');
+      const payload: Record<string, unknown> = {
+        name: zoneName,
+        description,
+        zone_type: selectedType,
+        communal_id: communalId || undefined,
+        government_code: governmentCode || undefined,
+        object_id: objectId || undefined,
+        radius_meters: radiusMeters,
+        source_mode: sourceMode,
+        dynamic_member_threshold: dynamicMembers,
+        dynamic_time_minutes: dynamicTimeMinutes,
+      };
+      await createZone(payload);
+      setStatus("Zone flow saved.");
+    } catch {
+      setStatus("Could not save. Verify authentication and API availability.");
     }
   };
 
   return (
-    <div className="grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
-      <div className="space-y-6">
-        <section className="layer-card">
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-teal-300">Zone Builder</p>
-              <h1 className="text-3xl font-semibold text-white">Interactive H3 and geofence design.</h1>
-            </div>
-            <div className="rounded-3xl bg-slate-800/90 px-4 py-3 text-sm text-slate-300">Live map-driven workflow</div>
-          </div>
-          <p className="text-slate-400">Click cells to build hex-based zones or draw a geo-fence polygon for custom coverage.</p>
-        </section>
+    <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+      <div className="rounded-2xl border border-slate-800/80 bg-slate-950/80 p-5">
+        <p className="text-sm uppercase tracking-[0.28em] text-[#00E5D1]">Zone Creation</p>
+        <h1 className="mt-2 text-3xl font-semibold text-white">8 Type-Specific Flows</h1>
+        <p className="mt-3 text-sm text-slate-400">
+          Select one of the eight zone types and follow the exact flow steps from the v1.1 summary.
+        </p>
 
-        <div className="grid gap-6">
-          <div className="layer-card">
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-3xl border border-slate-800/80 bg-slate-950/90 p-5">
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Selected cells</p>
-                <p className="mt-4 text-3xl font-semibold text-white">{selectedCells.length}</p>
-              </div>
-              <div className="rounded-3xl border border-slate-800/80 bg-slate-950/90 p-5">
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Polygon area</p>
-                <p className="mt-4 text-3xl font-semibold text-white">{areaKm2.toFixed(2)} km²</p>
-              </div>
-              <div className="rounded-3xl border border-slate-800/80 bg-slate-950/90 p-5">
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Definition</p>
-                <p className="mt-4 text-2xl font-semibold text-teal-300 uppercase tracking-[0.15em]">{mode === 'hex' ? 'H3 Hex' : 'Geo-fence'}</p>
-              </div>
-            </div>
-          </div>
-          <ZoneBuilderMap
-            resolution={resolution}
-            selectedCells={selectedCells}
-            selectedColor={selectedColor}
-            mode={mode}
-            polygonPoints={polygonPoints}
-            onCellToggle={handleCellToggle}
-            onPolygonAddPoint={handlePolygonAddPoint}
-            onPolygonReset={handlePolygonReset}
-          />
+        <div className="mt-5 grid gap-2 md:grid-cols-2">
+          {zoneTypeSpecs.map((spec) => (
+            <button
+              key={spec.key}
+              type="button"
+              onClick={() => setSelectedType(spec.key)}
+              className={`rounded-lg border px-3 py-3 text-left text-sm transition ${
+                selectedType === spec.key
+                  ? "border-[#00E5D1]/70 bg-[#00E5D1]/10 text-[#00E5D1]"
+                  : "border-slate-700/80 bg-slate-900/70 text-slate-300"
+              }`}
+            >
+              {spec.title}
+            </button>
+          ))}
         </div>
       </div>
 
-      <aside className="layer-card space-y-6">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-teal-300">Controls</p>
-              <h2 className="text-xl font-semibold text-white">Builder settings</h2>
-            </div>
-            <div className="rounded-full bg-slate-950/90 px-3 py-2 text-sm text-slate-300">Mode: {mode === 'hex' ? 'H3' : 'Geo-fence'}</div>
-          </div>
-          <div className="space-y-4">
-            <label className="block text-sm text-slate-300">Definition mode</label>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setMode('hex')}
-                className={`rounded-3xl px-4 py-3 text-left text-sm transition ${
-                  mode === 'hex' ? 'bg-teal-500/15 text-teal-200' : 'bg-slate-900/80 text-slate-300 hover:bg-slate-800/80'
-                }`}
-              >
-                <Square className="mb-2 h-5 w-5" /> H3 Hex
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('polygon')}
-                className={`rounded-3xl px-4 py-3 text-left text-sm transition ${
-                  mode === 'polygon' ? 'bg-teal-500/15 text-teal-200' : 'bg-slate-900/80 text-slate-300 hover:bg-slate-800/80'
-                }`}
-              >
-                <ArrowDownRight className="mb-2 h-5 w-5" /> Geo-fence
-              </button>
-            </div>
-            <label className="block text-sm text-slate-300">
-              Resolution: {resolution}
-              <input
-                type="range"
-                min={8}
-                max={15}
-                value={resolution}
-                onChange={(event) => setResolution(Number(event.target.value))}
-                className="mt-3 w-full accent-teal-400"
-              />
-            </label>
-            <label className="block text-sm text-slate-300">
-              Zone color
-              <input
-                type="color"
-                value={selectedColor}
-                onChange={(event) => setSelectedColor(event.target.value)}
-                className="mt-3 h-12 w-full cursor-pointer rounded-3xl border border-slate-800/80 bg-slate-950/90 p-2"
-              />
-            </label>
-          </div>
-        </div>
-        <div className="space-y-4 rounded-3xl border border-slate-800/80 bg-slate-950/90 p-5">
-          <p className="text-sm uppercase tracking-[0.3em] text-teal-300">Zone payload</p>
+      <aside className="space-y-4 rounded-2xl border border-slate-800/80 bg-slate-950/80 p-5">
+        <h2 className="text-xl font-semibold text-white">{selectedSpec.title}</h2>
+        <p className="text-sm text-slate-400">{selectedSpec.helper}</p>
+        <ol className="space-y-1 text-sm text-slate-300">
+          {selectedSpec.steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+
+        <label className="block text-sm text-slate-300">
+          Zone name
+          <input
+            value={zoneName}
+            onChange={(event) => setZoneName(event.target.value)}
+            className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
+          />
+        </label>
+
+        <label className="block text-sm text-slate-300">
+          Description
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={2}
+            className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
+          />
+        </label>
+
+        {(selectedType === "type2_communal" || selectedType === "type3_gov_code") && (
           <label className="block text-sm text-slate-300">
-            Name
+            {selectedType === "type2_communal" ? "Communal ID" : "Government Local Code"}
             <input
-              value={zoneName}
-              onChange={(event) => setZoneName(event.target.value)}
-              className="mt-2 w-full rounded-3xl border border-slate-800/90 bg-slate-950/90 px-4 py-3 text-slate-100"
+              value={selectedType === "type2_communal" ? communalId : governmentCode}
+              onChange={(event) =>
+                selectedType === "type2_communal"
+                  ? setCommunalId(event.target.value)
+                  : setGovernmentCode(event.target.value)
+              }
+              className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
             />
           </label>
+        )}
+
+        {selectedType === "type4_object" && (
           <label className="block text-sm text-slate-300">
-            Description
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              rows={3}
-              className="mt-2 w-full rounded-3xl border border-slate-800/90 bg-slate-950/90 px-4 py-3 text-slate-100"
+            Object ID / Landmark
+            <input
+              value={objectId}
+              onChange={(event) => setObjectId(event.target.value)}
+              className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
             />
           </label>
+        )}
+
+        {(selectedType === "type4_object" ||
+          selectedType === "type6_geo_fence" ||
+          selectedType === "type7_proximity") && (
           <label className="block text-sm text-slate-300">
-            Zone type
+            Radius / distance (meters)
+            <input
+              type="number"
+              min={50}
+              value={radiusMeters}
+              onChange={(event) => setRadiusMeters(Number(event.target.value))}
+              className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
+            />
+          </label>
+        )}
+
+        {selectedType === "type7_proximity" && (
+          <label className="block text-sm text-slate-300">
+            Source selection
             <select
-              value={zoneType}
-              onChange={(event) => setZoneType(event.target.value)}
-              className="mt-2 w-full rounded-3xl border border-slate-800/90 bg-slate-950/90 px-4 py-3 text-slate-100"
+              value={sourceMode}
+              onChange={(event) => setSourceMode(event.target.value)}
+              className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
             >
-              {zoneTypes.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
+              <option value="originator">Message Originator Coordinate</option>
+              <option value="pin">Pin on Map</option>
+              <option value="my_location">My Current Location</option>
             </select>
           </label>
-        </div>
-        <div className="space-y-4 rounded-3xl border border-slate-800/80 bg-slate-950/90 p-5">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm uppercase tracking-[0.3em] text-teal-300">Exports</p>
-            <span className="rounded-full bg-slate-800/80 px-3 py-1 text-xs text-slate-300">{selectedCells.length} cells</span>
-          </div>
-          <div className="grid gap-3">
-            <button
-              type="button"
-              onClick={handleExportJson}
-              className="flex items-center justify-center gap-2 rounded-3xl bg-slate-900/90 px-4 py-3 text-sm text-slate-100 transition hover:bg-slate-800/90"
-            >
-              <Upload size={16} /> Export JSON
-            </button>
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              className="flex items-center justify-center gap-2 rounded-3xl bg-slate-900/90 px-4 py-3 text-sm text-slate-100 transition hover:bg-slate-800/90"
-            >
-              <Download size={16} /> Export CSV
-            </button>
-          </div>
-        </div>
-        <div className="rounded-3xl border border-slate-800/80 bg-slate-950/90 p-5">
-          <div className="mb-4 flex items-center gap-3 text-sm text-slate-300">
-            <Zap size={16} /> <span>Actions</span>
-          </div>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="w-full rounded-3xl bg-teal-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-teal-400"
-          >
-            Save zone
-          </button>
-          {status && <p className="mt-4 text-sm text-slate-300">{status}</p>}
-        </div>
+        )}
+
+        {selectedType === "type8_dynamic" && (
+          <>
+            <label className="block text-sm text-slate-300">
+              Active member threshold
+              <input
+                type="number"
+                min={1}
+                value={dynamicMembers}
+                onChange={(event) => setDynamicMembers(Number(event.target.value))}
+                className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
+              />
+            </label>
+            <label className="block text-sm text-slate-300">
+              Time period (minutes)
+              <input
+                type="number"
+                min={1}
+                value={dynamicTimeMinutes}
+                onChange={(event) => setDynamicTimeMinutes(Number(event.target.value))}
+                className="mt-2 w-full rounded-md border border-slate-700/80 bg-slate-950 px-3 py-2 text-white"
+              />
+            </label>
+          </>
+        )}
+
+        <button
+          type="button"
+          onClick={saveZone}
+          className="w-full rounded-md bg-[#00E5D1] px-4 py-2 font-semibold text-[#0B0E11]"
+        >
+          Save Zone Flow
+        </button>
+        {status ? <p className="text-sm text-slate-400">{status}</p> : null}
       </aside>
-    </div>
+    </section>
   );
 }
