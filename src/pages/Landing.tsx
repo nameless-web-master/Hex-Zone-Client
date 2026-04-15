@@ -327,7 +327,7 @@ export default function Landing() {
               </ul>
               <Link
                 to="/register"
-                className="mt-8 inline-flex w-full items-center justify-center rounded-2xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-400"
+                className="mt-8 inline-flex w-full items-center justify-center rounded-md bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-400"
               >
                 Create Exclusive Zone
               </Link>
