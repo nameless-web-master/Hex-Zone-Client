@@ -1,5 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { login as loginRequest, register as registerRequest, fetchMe } from '../lib/api';
+import {
+  login as loginRequest,
+  register as registerRequest,
+  fetchMe,
+  fetchDevices,
+  sendDeviceHeartbeat,
+  updateOwner,
+} from '../lib/api';
 
 interface User {
   id: number;
@@ -7,13 +14,16 @@ interface User {
   first_name: string;
   last_name: string;
   account_type: string;
+  zone_id?: string | number;
+  active?: boolean;
 }
 
 interface AuthContextValue {
   user: User | null;
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (payload: { email: string; password: string; first_name: string; last_name: string; account_type: 'private' | 'exclusive'; phone?: string; zone_id?: string; address?: string }) => Promise<void>;
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
+  register: (payload: { email: string; password: string; first_name: string; last_name: string; account_type: 'private' | 'exclusive' | 'guard'; phone?: string; zone_id?: string; address?: string }) => Promise<void>;
   logout: () => void;
 }
 
@@ -40,10 +50,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('zoneweaver_token', data.access_token);
     setToken(data.access_token);
     const profile = await fetchMe();
-    setUser(profile);
+    await updateOwner(profile.id, { active: true });
+    const [refreshed] = await Promise.all([
+      fetchMe(),
+      (async () => {
+        try {
+          const devices = await fetchDevices();
+          await Promise.allSettled(
+            devices.map((device) => sendDeviceHeartbeat(device.id)),
+          );
+        } catch {
+          /* session is valid even if device list / heartbeats fail */
+        }
+      })(),
+    ]);
+    setUser(refreshed);
   };
 
-  const register = async (payload: { email: string; password: string; first_name: string; last_name: string; account_type: 'private' | 'exclusive'; phone?: string; zone_id?: string; address?: string }) => {
+  const register = async (payload: { email: string; password: string; first_name: string; last_name: string; account_type: 'private' | 'exclusive' | 'guard'; phone?: string; zone_id?: string; address?: string }) => {
     await registerRequest(payload);
   };
 

@@ -1,15 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ChevronRight, Eye, EyeOff, QrCode } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import AuthMapPanel from "../components/AuthMapPanel";
 import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
-import {
-  addressToMockCoords,
-  generateZoneId,
-  getHexGrid,
-  H3Cell,
-} from "../lib/h3";
+import { addressToMockCoords, getHexGrid, H3Cell } from "../lib/h3";
 
 const accent = "text-[#00E5D1]";
 const accentBorder = "border-[#00E5D1]/50";
@@ -19,31 +14,11 @@ const labelClass =
   "mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500";
 const inputClass = `${panelBg} w-full rounded-md border border-slate-700/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`;
 
-const accountOptions: {
-  value: "private" | "exclusive" | "guard";
-  title: string;
-  lines: [string, string];
-}[] = [
-  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
-  {
-    value: "private",
-    title: "Private",
-    lines: ["Many users, 1 device each", "Shared zone type"],
-  },
-  {
-    value: "exclusive",
-    title: "Exclusive",
-    lines: ["1 user, 1 device", "Any zone type"],
-  },
-  {
-    value: "guard",
-    title: "Guard Account",
-    lines: ["1 user, 1 device", "Single-zone dashboard behavior"],
-  },
-];
-
-export default function CreateAccount() {
+export default function Join() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const zoneFromQuery = searchParams.get("zone")?.trim() ?? "";
+
   const { register } = useAuth();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -51,21 +26,18 @@ export default function CreateAccount() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [accountType, setAccountType] = useState<
-    "private" | "exclusive" | "guard"
-  >(
-    "private",
-  );
+  const [zoneId, setZoneId] = useState(zoneFromQuery);
   const [address, setAddress] = useState("350 Fifth Avenue, New York");
-  /** Set when user picks a suggestion — map uses real [lat, lng] */
   const [addressCoords, setAddressCoords] = useState<[number, number] | null>(
     null,
   );
-  const [zoneId, setZoneId] = useState(() => generateZoneId());
-  const [useExistingZone, setUseExistingZone] = useState(false);
-  const [existingZoneId, setExistingZoneId] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const z = searchParams.get("zone")?.trim();
+    if (z) setZoneId(z);
+  }, [searchParams]);
 
   const center = useMemo<[number, number]>(
     () => addressCoords ?? addressToMockCoords(address),
@@ -73,29 +45,31 @@ export default function CreateAccount() {
   );
   const grid = useMemo<H3Cell[]>(() => getHexGrid(center, 13, 1), [center]);
 
-  const selectedZoneId =
-    useExistingZone && existingZoneId ? existingZoneId : zoneId;
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
-    setLoading(true);
+    const trimmedZone = zoneId.trim();
+    if (!trimmedZone) {
+      setError("Enter the zone ID from your invite or scan the QR code again.");
+      return;
+    }
 
+    setLoading(true);
     try {
       await register({
         email,
         password,
         first_name: firstName,
         last_name: lastName,
-        account_type: accountType,
+        account_type: "private",
         address,
         phone: phone || undefined,
-        zone_id: selectedZoneId,
+        zone_id: trimmedZone,
       });
       navigate("/login");
     } catch {
       setError(
-        "Could not create account. Please review your details and try again.",
+        "Could not complete registration. Check the zone ID and your details, then try again.",
       );
     } finally {
       setLoading(false);
@@ -117,22 +91,40 @@ export default function CreateAccount() {
             className={`flex items-center gap-2 border-b px-6 py-3 text-xs ${accent} ${accentBorder} bg-[#00E5D1]/10`}
           >
             <QrCode className="h-4 w-4 shrink-0" strokeWidth={2} />
-            <span>Have a QR code? Scan to auto-populate your Zone ID</span>
+            <span>Joining a private zone — your zone ID is set from the invite</span>
           </div>
 
           <div className="flex flex-1 flex-col overflow-y-auto px-6 py-8 sm:px-10">
             <h1 className="text-center text-2xl font-semibold tracking-tight text-white">
-              Create Account
+              Join with QR
             </h1>
+            <p className="mt-2 text-center text-sm text-slate-400">
+              Complete your profile to join this network.
+            </p>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+              <div>
+                <label htmlFor="join-zone" className={labelClass}>
+                  Zone ID
+                </label>
+                <input
+                  id="join-zone"
+                  value={zoneId}
+                  onChange={(e) => setZoneId(e.target.value)}
+                  placeholder="ZN-XXXXXXXX"
+                  required
+                  className={`${inputClass} font-mono`}
+                  autoComplete="off"
+                />
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label htmlFor="reg-first" className={labelClass}>
+                  <label htmlFor="join-first" className={labelClass}>
                     First name
                   </label>
                   <input
-                    id="reg-first"
+                    id="join-first"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     placeholder="Alex"
@@ -142,11 +134,11 @@ export default function CreateAccount() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="reg-last" className={labelClass}>
+                  <label htmlFor="join-last" className={labelClass}>
                     Last name
                   </label>
                   <input
-                    id="reg-last"
+                    id="join-last"
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
                     placeholder="Chen"
@@ -158,11 +150,11 @@ export default function CreateAccount() {
               </div>
 
               <div>
-                <label htmlFor="reg-email" className={labelClass}>
+                <label htmlFor="join-email" className={labelClass}>
                   Email
                 </label>
                 <input
-                  id="reg-email"
+                  id="join-email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -174,11 +166,11 @@ export default function CreateAccount() {
               </div>
 
               <div>
-                <label htmlFor="reg-phone" className={labelClass}>
+                <label htmlFor="join-phone" className={labelClass}>
                   Phone (optional)
                 </label>
                 <input
-                  id="reg-phone"
+                  id="join-phone"
                   type="tel"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
@@ -189,7 +181,7 @@ export default function CreateAccount() {
               </div>
 
               <AddressAutocompleteInput
-                id="reg-address"
+                id="join-address"
                 label="Address"
                 value={address}
                 onChange={(addr, coords) => {
@@ -203,95 +195,12 @@ export default function CreateAccount() {
               />
 
               <div>
-                <p className={labelClass}>Account type</p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {accountOptions.map((option) => {
-                    const active = accountType === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setAccountType(option.value)}
-                        className={`rounded-md border px-4 py-4 text-left transition ${
-                          active
-                            ? `border-[#00E5D1] bg-[#00E5D1]/10 shadow-[0_0_24px_-8px_rgba(0,229,209,0.45)]`
-                            : "border-slate-700/80 bg-[#151a20] hover:border-slate-600"
-                        }`}
-                      >
-                        <p className="font-semibold text-white">
-                          {option.title}
-                        </p>
-                        <p className="mt-2 text-sm text-slate-400">
-                          {option.lines[0]}
-                        </p>
-                        <p className="mt-1 text-sm text-slate-500">
-                          {option.lines[1]}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-md border border-slate-700/80 bg-[#151a20] p-4">
-                <p className={labelClass}>Zone ID</p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setUseExistingZone(false)}
-                    className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                      !useExistingZone
-                        ? `${accentBg} text-[#0B0E11]`
-                        : "bg-slate-800/90 text-slate-300 hover:bg-slate-700/90"
-                    }`}
-                  >
-                    Generate New
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUseExistingZone(true)}
-                    className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                      useExistingZone
-                        ? `${accentBg} text-[#0B0E11]`
-                        : "bg-slate-800/90 text-slate-300 hover:bg-slate-700/90"
-                    }`}
-                  >
-                    Enter Existing
-                  </button>
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-stretch gap-2 sm:flex-nowrap">
-                  <input
-                    readOnly={!useExistingZone}
-                    value={useExistingZone ? existingZoneId : zoneId}
-                    onChange={(e) => {
-                      if (useExistingZone) setExistingZoneId(e.target.value);
-                    }}
-                    placeholder="ZN-XXXXXXXX"
-                    className={`min-w-0 flex-1 rounded-md border border-slate-700/80 px-3 py-2.5 font-mono text-sm focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25 ${
-                      useExistingZone
-                        ? `${panelBg} text-white`
-                        : `${panelBg} ${accent}`
-                    }`}
-                  />
-                  <button
-                    type="button"
-                    disabled={useExistingZone}
-                    onClick={() => setZoneId(generateZoneId())}
-                    className="shrink-0 rounded-md border border-slate-600 bg-slate-800/90 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-700/90 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Regenerate
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="reg-password" className={labelClass}>
+                <label htmlFor="join-password" className={labelClass}>
                   Password
                 </label>
                 <div className="relative">
                   <input
-                    id="reg-password"
+                    id="join-password"
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -330,10 +239,10 @@ export default function CreateAccount() {
                 className={`flex w-full items-center justify-center gap-2 rounded-md ${accentBg} py-3.5 text-sm font-bold text-[#0B0E11] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
               >
                 {loading ? (
-                  "Creating account…"
+                  "Joining…"
                 ) : (
                   <>
-                    Create Account &amp; Define Zone
+                    Join zone &amp; create account
                     <ChevronRight className="h-4 w-4" strokeWidth={2.5} />
                   </>
                 )}
@@ -341,12 +250,19 @@ export default function CreateAccount() {
             </form>
 
             <p className="mt-8 text-center text-sm text-slate-500">
-              Already have an account?{" "}
+              Need your own zone?{" "}
+              <Link
+                to="/register"
+                className={`font-medium ${accent} hover:underline`}
+              >
+                Create account
+              </Link>
+              {" · "}
               <Link
                 to="/login"
                 className={`font-medium ${accent} hover:underline`}
               >
-                Login
+                Sign in
               </Link>
             </p>
           </div>

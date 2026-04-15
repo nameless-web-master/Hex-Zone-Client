@@ -17,6 +17,9 @@ function toRadians(degrees: number) {
   return (degrees * Math.PI) / 180;
 }
 
+/** Default map center for auth screens (Manhattan) */
+export const AUTH_MAP_DEFAULT_CENTER: [number, number] = [40.7527, -73.9772];
+
 export function generateZoneId() {
   return `ZN-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 }

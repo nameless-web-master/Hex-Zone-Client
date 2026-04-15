@@ -1,119 +1,315 @@
-import { useEffect, useMemo, useState } from 'react';
-import { fetchDevices, fetchZones } from '../lib/api';
-import { BarChart3, MapPin, Shield, Sparkles } from 'lucide-react';
+import { useMemo, useRef, useState, type RefObject } from "react";
+import HexMapperMap from "../components/HexMapperMap";
+import { useAuth } from "../hooks/useAuth";
+import { AUTH_MAP_DEFAULT_CENTER, getCellFromCoords } from "../lib/h3";
+
+type DashboardTab = "zone1" | "zone2" | "zone3" | "schedule";
+
+type ScheduleEvent = {
+  id: string;
+  company: string;
+  date: string;
+  start: string;
+  end: string;
+  description: string;
+  waitTimeSec: number;
+};
+
+const tabs: { key: DashboardTab; label: string }[] = [
+  { key: "zone1", label: "Zone 1" },
+  { key: "zone2", label: "Zone 2" },
+  { key: "zone3", label: "Zone 3" },
+  { key: "schedule", label: "Schedule Access" },
+];
+
+const scheduleEvents: ScheduleEvent[] = [
+  // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
+  {
+    id: "EV-1001",
+    company: "Northline Security",
+    date: "Apr 16, 2026",
+    start: "08:00",
+    end: "10:30",
+    description: "Contractor entry for camera maintenance.",
+    waitTimeSec: 45,
+  },
+  {
+    id: "EV-1002",
+    company: "Metro Utility",
+    date: "Apr 16, 2026",
+    start: "11:00",
+    end: "13:00",
+    description: "Power meter validation visit.",
+    waitTimeSec: 60,
+  },
+];
 
 export default function Dashboard() {
-  const [devices, setDevices] = useState<any[]>([]);
-  const [zones, setZones] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const isGuard = String(user?.account_type ?? "").toLowerCase() === "guard";
 
-  useEffect(() => {
-    Promise.all([fetchZones(), fetchDevices()])
-      .then(([zoneData, deviceData]) => {
-        setZones(zoneData);
-        setDevices(deviceData);
-      })
-      .catch(() => {
-        setZones([]);
-        setDevices([]);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const [activeTab, setActiveTab] = useState<DashboardTab>("zone1");
+  const [resolution, setResolution] = useState(13);
+  const [selectedCellsByZone, setSelectedCellsByZone] = useState<
+    Record<"zone1" | "zone2" | "zone3", string[]>
+  >({
+    zone1: [],
+    zone2: [],
+    zone3: [],
+  });
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(
+    scheduleEvents[0]?.id ?? null,
+  );
 
-  const online = useMemo(() => devices.filter((device) => device.active).length, [devices]);
-  const offline = useMemo(() => devices.filter((device) => !device.active).length, [devices]);
-  const alertCount = useMemo(() => Math.max(0, zones.length - 1), [zones]);
+  const slideRefs: Record<DashboardTab, RefObject<HTMLDivElement>> = {
+    zone1: useRef<HTMLDivElement>(null),
+    zone2: useRef<HTMLDivElement>(null),
+    zone3: useRef<HTMLDivElement>(null),
+    schedule: useRef<HTMLDivElement>(null),
+  };
+
+  const selectedEvent = useMemo(
+    () => scheduleEvents.find((event) => event.id === selectedEventId) ?? null,
+    [selectedEventId],
+  );
+
+  const switchTab = (tab: DashboardTab) => {
+    setActiveTab(tab);
+    slideRefs[tab].current?.scrollIntoView({
+      behavior: "smooth",
+      inline: "start",
+      block: "nearest",
+    });
+  };
 
   return (
-    <div className="space-y-8">
-      <section className="layer-card">
-        <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-teal-300">Dashboard overview</p>
-            <h1 className="text-3xl font-semibold text-white">Your zone operations at a glance.</h1>
-            <p className="mt-3 max-w-2xl text-slate-400">
-              Monitor device health, active zones, and live API activity from a single command center.
-            </p>
-          </div>
-          <div className="rounded-[2rem] border border-slate-800/80 bg-slate-900/90 p-6 shadow-glow">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Fleet health</p>
-                <p className="text-2xl font-semibold text-white">{loading ? '–' : `${online}/${devices.length}`}</p>
-              </div>
-              <div className="rounded-3xl bg-teal-500/15 px-4 py-2 text-sm text-teal-200">Live sync</div>
-            </div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-3xl bg-slate-950/80 p-4">
-                <p className="text-sm text-slate-400">Online devices</p>
-                <p className="mt-2 text-xl font-semibold text-white">{online}</p>
-              </div>
-              <div className="rounded-3xl bg-slate-950/80 p-4">
-                <p className="text-sm text-slate-400">Offline devices</p>
-                <p className="mt-2 text-xl font-semibold text-white">{offline}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+    <section className="space-y-4">
+      <header className="rounded-2xl border border-slate-800/80 bg-[#0B0E11] p-5">
+        <p className="text-xs uppercase tracking-[0.22em] text-[#00E5D1]">Dashboard</p>
+        <h1 className="mt-2 text-2xl font-semibold text-white">
+          {isGuard ? "Guard Account Operations" : "Zone Operations & Schedule Access"}
+        </h1>
+        <p className="mt-2 text-sm text-slate-400">
+          {isGuard
+            ? "Guard Account is restricted to one active zone with focused control behavior."
+            : "Swipe or use tabs to move between Zone 1, Zone 2, Zone 3, and Schedule Access."}
+        </p>
+      </header>
 
-      <section className="grid gap-6 lg:grid-cols-3">
-        <div className="layer-card flex items-center gap-4 p-6">
-          <div className="rounded-3xl bg-teal-500/10 p-4 text-teal-300">
-            <MapPin size={26} />
-          </div>
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Active zones</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{loading ? '–' : zones.length}</p>
-          </div>
-        </div>
-        <div className="layer-card flex items-center gap-4 p-6">
-          <div className="rounded-3xl bg-teal-500/10 p-4 text-teal-300">
-            <Shield size={26} />
-          </div>
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Device inventory</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{loading ? '–' : devices.length}</p>
-          </div>
-        </div>
-        <div className="layer-card flex items-center gap-4 p-6">
-          <div className="rounded-3xl bg-teal-500/10 p-4 text-teal-300">
-            <BarChart3 size={26} />
-          </div>
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Pending alerts</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{loading ? '–' : alertCount}</p>
-          </div>
-        </div>
-      </section>
+      <nav className="flex flex-wrap gap-2">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => switchTab(tab.key)}
+            disabled={isGuard && (tab.key === "zone2" || tab.key === "zone3")}
+            className={`rounded-md border px-3 py-2 text-sm transition ${
+              activeTab === tab.key
+                ? "border-[#00E5D1] bg-[#00E5D1]/15 text-[#00E5D1]"
+                : "border-slate-700/80 bg-slate-950/80 text-slate-300 hover:border-slate-600"
+            } ${(isGuard && (tab.key === "zone2" || tab.key === "zone3")) ? "cursor-not-allowed opacity-50" : ""}`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
 
-      <section className="layer-card grid gap-6 xl:grid-cols-[0.7fr_0.3fr]">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-teal-300">Operations map</p>
-              <h2 className="text-xl font-semibold text-white">Zone heatmap preview</h2>
-            </div>
-            <span className="rounded-full bg-slate-950/80 px-3 py-2 text-xs text-slate-400">Interactive</span>
-          </div>
-          <div className="aspect-[16/9] rounded-[2rem] bg-slate-950/90 p-6 text-slate-400">
-            <p className="text-sm leading-7">The Zone Builder page renders the actual H3 mesh and geofence boundaries for your current network.</p>
-          </div>
+      <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2">
+        {tabs.map((tab) => (
+          <article
+            key={tab.key}
+            ref={slideRefs[tab.key]}
+            className="w-full shrink-0 snap-start rounded-2xl border border-slate-800/80 bg-slate-950/85 p-4"
+          >
+            {tab.key === "schedule" ? (
+              <ScheduleAccessPanel
+                selectedEvent={selectedEvent}
+                selectedEventId={selectedEventId}
+                onSelectEvent={setSelectedEventId}
+              />
+            ) : isGuard && (tab.key === "zone2" || tab.key === "zone3") ? (
+              <GuardLockedZonePanel zoneKey={tab.key} />
+            ) : (
+              <ZonePanel
+                zoneKey={tab.key}
+                guardMode={isGuard}
+                resolution={resolution}
+                onResolutionChange={setResolution}
+                selectedCells={selectedCellsByZone[tab.key]}
+                onSelectedCellsChange={(next) =>
+                  setSelectedCellsByZone((prev) => ({ ...prev, [tab.key]: next }))
+                }
+              />
+            )}
+          </article>
+        ))}
+      </div>
+
+      <p className="text-xs text-slate-500">
+        // UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf
+      </p>
+    </section>
+  );
+}
+
+function GuardLockedZonePanel({ zoneKey }: { zoneKey: "zone2" | "zone3" }) {
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-6">
+      {/* UPDATED for Zoning-Messaging-System-Summary-v1.1.pdf */}
+      <h2 className="text-xl font-semibold text-amber-200">
+        {zoneKey === "zone2" ? "Zone 2" : "Zone 3"} Unavailable
+      </h2>
+      <p className="mt-2 text-sm text-amber-100/80">
+        Guard Account supports one active zone only. Use Zone 1 for guard operations and Schedule Access for event handling.
+      </p>
+    </div>
+  );
+}
+
+function ZonePanel({
+  zoneKey,
+  guardMode,
+  resolution,
+  onResolutionChange,
+  selectedCells,
+  onSelectedCellsChange,
+}: {
+  zoneKey: "zone1" | "zone2" | "zone3";
+  guardMode: boolean;
+  resolution: number;
+  onResolutionChange: (value: number) => void;
+  selectedCells: string[];
+  onSelectedCellsChange: (cells: string[]) => void;
+}) {
+  const [cursor, setCursor] = useState<{ lat: number; lng: number } | null>(null);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-white">
+            {zoneKey === "zone1" ? "Zone 1" : zoneKey === "zone2" ? "Zone 2" : "Zone 3"}
+          </h2>
+          <p className="text-sm text-slate-400">
+            {guardMode
+              ? "Guard dashboard keeps one zone active; use this pane for guard coverage."
+              : "Tap map hexagons to shape this zone with H3 mapping."}
+          </p>
         </div>
-        <div className="space-y-4 rounded-[2rem] border border-slate-800/80 bg-slate-950/90 p-6">
-          <p className="text-sm uppercase tracking-[0.3em] text-teal-300">Recent activity</p>
-          <div className="space-y-3">
-            <div className="rounded-3xl bg-slate-900/80 p-4">
-              <p className="text-sm text-slate-400">New zone created</p>
-              <p className="mt-2 text-white">{loading ? '—' : zones[0]?.name || 'No zones yet'}</p>
-            </div>
-            <div className="rounded-3xl bg-slate-900/80 p-4">
-              <p className="text-sm text-slate-400">Device updates</p>
-              <p className="mt-2 text-white">{loading ? '—' : `${online} online · ${offline} offline`}</p>
-            </div>
+        <label className="text-sm text-slate-300">
+          H3 Resolution: {resolution}
+          <input
+            type="range"
+            min={0}
+            max={15}
+            value={resolution}
+            onChange={(event) => onResolutionChange(Number(event.target.value))}
+            className="mt-2 w-full min-w-[170px] accent-[#00E5D1]"
+          />
+        </label>
+      </div>
+
+      <div className="h-[440px] overflow-hidden rounded-xl border border-slate-800/80">
+        <HexMapperMap
+          center={AUTH_MAP_DEFAULT_CENTER}
+          mapFitBounds={null}
+          resolution={resolution}
+          selectedCells={selectedCells}
+          savedZoneCellLayers={[]}
+          savedZonePolygonLayers={[]}
+          h3Color="#00E5D1"
+          h3FillOpacity={0.35}
+          polygons={[]}
+          polygonColor="#00E5D1"
+          polygonFillOpacity={0.2}
+          draftRing={[]}
+          draftLineColor="#00E5D1"
+          measureA={null}
+          measureB={null}
+          measurePreview={null}
+          measureColor="#00E5D1"
+          grayscale={false}
+          interactionMode="h3"
+          drawingActive={false}
+          onMapClick={(lat, lng) => {
+            const nextCell = getCellFromCoords(lat, lng, resolution);
+            onSelectedCellsChange(
+              selectedCells.includes(nextCell)
+                ? selectedCells.filter((id) => id !== nextCell)
+                : [...selectedCells, nextCell],
+            );
+          }}
+          onMapMouseMove={(lat, lng) => setCursor({ lat, lng })}
+          onContextMenu={() => undefined}
+          onCursorCoords={(lat, lng) => setCursor({ lat, lng })}
+          interactive
+        />
+      </div>
+
+      <div className="rounded-xl border border-slate-800/80 bg-[#0B0E11] p-3 text-sm text-slate-300">
+        <p>Selected cells: {selectedCells.length}</p>
+        <p className="font-mono text-xs text-slate-500">
+          Cursor: {cursor ? `${cursor.lat.toFixed(5)}, ${cursor.lng.toFixed(5)}` : "move pointer..."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ScheduleAccessPanel({
+  selectedEvent,
+  selectedEventId,
+  onSelectEvent,
+}: {
+  selectedEvent: ScheduleEvent | null;
+  selectedEventId: string | null;
+  onSelectEvent: (id: string) => void;
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+      <div className="rounded-xl border border-slate-800/80 bg-[#0B0E11] p-4">
+        <h2 className="text-lg font-semibold text-white">Upcoming Events</h2>
+        <ul className="mt-4 space-y-2">
+          {scheduleEvents.map((event) => (
+            <li key={event.id}>
+              <button
+                type="button"
+                onClick={() => onSelectEvent(event.id)}
+                className={`w-full rounded-lg border px-3 py-2 text-left ${
+                  selectedEventId === event.id
+                    ? "border-[#00E5D1]/70 bg-[#00E5D1]/10 text-[#00E5D1]"
+                    : "border-slate-700/80 bg-slate-900/70 text-slate-300"
+                }`}
+              >
+                <p className="font-medium">{event.company}</p>
+                <p className="text-xs">{event.date}</p>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="space-y-4 rounded-xl border border-slate-800/80 bg-[#0B0E11] p-4">
+        <h3 className="text-lg font-semibold text-white">Event Detail</h3>
+        {selectedEvent ? (
+          <div className="space-y-1 text-sm text-slate-300">
+            <p>Name/Company: {selectedEvent.company}</p>
+            <p>Date: {selectedEvent.date}</p>
+            <p>Start: {selectedEvent.start}</p>
+            <p>End: {selectedEvent.end}</p>
+            <p>Event ID: {selectedEvent.id}</p>
+            <p>Description: {selectedEvent.description}</p>
+            <p>Wait time (sec): {selectedEvent.waitTimeSec}</p>
+            <p>How to handle access REQUEST: Event owner first, members second.</p>
           </div>
+        ) : (
+          <p className="text-sm text-slate-500">Select an event to view details.</p>
+        )}
+
+        <div className="rounded-xl border border-dashed border-slate-700/80 bg-slate-900/40 p-5 text-center text-slate-500">
+          Calendar Placeholder
         </div>
-      </section>
+      </div>
     </div>
   );
 }
