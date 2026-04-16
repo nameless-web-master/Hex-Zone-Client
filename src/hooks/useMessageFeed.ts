@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { getStoredToken } from "../services/api/client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listMessages, type Message } from "../services/api/messages";
-import { MessageSocketClient } from "../services/socket/messageSocket";
+import {
+  defaultRealtimeWsBase,
+  parseMessageSocketPayload,
+} from "../services/socket/messageSocket";
 import { useAuth } from "./useAuth";
 import { useAppState } from "../state/app/AppStateContext";
+import { useWebSocket } from "./useWebSocket";
 
 function sortByNewest(list: Message[]) {
   return [...list].sort(
@@ -19,17 +22,18 @@ export function useMessageFeed(zoneIds: string[]) {
   const [error, setError] = useState<string | null>(null);
   const ownerId = Number(user?.id);
 
-  useEffect(() => {
-    if (!Number.isFinite(ownerId) || ownerId <= 0 || !token) {
-      setLocalMessages([]);
-      setGlobalMessages([]);
-      return;
-    }
-    let active = true;
-    const socket = new MessageSocketClient();
-    let pollTimer: number | undefined;
+  const zoneIdsRef = useRef(zoneIds);
+  zoneIdsRef.current = zoneIds;
+  const zoneKey = useMemo(() => JSON.stringify(zoneIds), [zoneIds]);
 
-    const applyMessage = (incoming: Message) => {
+  const wsUrl = useMemo(() => {
+    if (!token) return null;
+    const base = defaultRealtimeWsBase();
+    return `${base}?token=${encodeURIComponent(token)}`;
+  }, [token]);
+
+  const applyMessage = useCallback(
+    (incoming: Message) => {
       setLocalMessages((prev) => {
         const exists = prev.some((msg) => msg.id === incoming.id);
         const next = exists
@@ -39,7 +43,39 @@ export function useMessageFeed(zoneIds: string[]) {
         setGlobalMessages(sorted);
         return sorted;
       });
-    };
+    },
+    [setGlobalMessages],
+  );
+
+  const { send } = useWebSocket(wsUrl, {
+    buildOpenFrames: () =>
+      zoneIdsRef.current.length > 0
+        ? [JSON.stringify({ type: "SUBSCRIBE", zoneIds: zoneIdsRef.current })]
+        : [],
+    onMessage: (ev) => {
+      if (typeof ev.data !== "string") return;
+      const incoming = parseMessageSocketPayload(ev.data);
+      if (incoming) applyMessage(incoming);
+    },
+    onError: () => {
+      setError("WebSocket connection error");
+    },
+  });
+
+  useEffect(() => {
+    if (!wsUrl) return;
+    if (zoneIdsRef.current.length === 0) return;
+    send(JSON.stringify({ type: "SUBSCRIBE", zoneIds: zoneIdsRef.current }));
+  }, [wsUrl, send, zoneKey]);
+
+  useEffect(() => {
+    if (!Number.isFinite(ownerId) || ownerId <= 0 || !token) {
+      setLocalMessages([]);
+      setGlobalMessages([]);
+      return;
+    }
+    let active = true;
+    let pollTimer: number | undefined;
 
     const poll = async () => {
       setLoading(true);
@@ -68,21 +104,13 @@ export function useMessageFeed(zoneIds: string[]) {
       pollTimer = window.setTimeout(poll, 8000);
     };
 
-    socket.connect({
-      token,
-      getToken: getStoredToken,
-      zoneIds,
-      onMessage: applyMessage,
-      onError: setError,
-    });
     void poll();
 
     return () => {
       active = false;
-      socket.disconnect();
       if (pollTimer) window.clearTimeout(pollTimer);
     };
-  }, [token, zoneIds, setGlobalMessages, ownerId]);
+  }, [token, setGlobalMessages, ownerId]);
 
   const zones = useMemo(
     () => Array.from(new Set(messages.map((msg) => msg.zone_id))),

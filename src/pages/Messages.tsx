@@ -24,9 +24,11 @@ export default function Messages() {
   const [composeText, setComposeText] = useState("");
   const [composeStatus, setComposeStatus] = useState("");
 
-  const { messages, zones, loading, error } = useMessageFeed(
-    userZoneId ? [String(userZoneId)] : [],
+  const messageZoneIds = useMemo(
+    () => (userZoneId ? [String(userZoneId)] : []),
+    [userZoneId],
   );
+  const { messages, zones, loading, error } = useMessageFeed(messageZoneIds);
 
   const filteredMessages = useMemo(() => {
     return messages.filter((message) => {
