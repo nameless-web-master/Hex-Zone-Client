@@ -11,16 +11,26 @@ export function MessageDetail({ message }: { message: Message | null }) {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-300">
-              {message.zoneId}
+              {message.zone_id}
             </span>
             <span className="rounded-full bg-slate-900 px-2 py-1 text-[#00E5D1]">
-              {message.type}
+              {message.visibility}
             </span>
+            <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-300">
+              sender {message.sender_id}
+            </span>
+            {message.receiver_id != null && (
+              <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-300">
+                receiver {message.receiver_id}
+              </span>
+            )}
             <span className="text-slate-500">
-              {new Date(message.createdAt).toLocaleString()}
+              {new Date(message.created_at).toLocaleString()}
             </span>
           </div>
-          <p className="text-sm leading-relaxed text-slate-200">{message.text}</p>
+          <p className="text-sm leading-relaxed text-slate-200">
+            {message.message}
+          </p>
         </div>
       )}
     </section>

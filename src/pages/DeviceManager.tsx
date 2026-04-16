@@ -66,7 +66,7 @@ function zoneLabel(h3?: string | null): string {
 
 function deriveUiStatus(device: Device): UiStatus {
   if (device.error_message) return "error";
-  const raw = device.status?.toLowerCase().trim();
+  const raw = device.status;
   if (raw === "error") return "error";
   if (raw === "offline") return "offline";
   if (raw === "online") return "online";
@@ -137,6 +137,15 @@ function mapOwnersToRegisteredUsers(data: unknown): RegisteredUser[] {
       return entry;
     })
     .filter((u): u is RegisteredUser => u != null);
+}
+
+function ownerForDevice(
+  device: Device,
+  owners: RegisteredUser[],
+): RegisteredUser | undefined {
+  const ownerId = device.owner_id != null ? String(device.owner_id) : null;
+  if (!ownerId) return undefined;
+  return owners.find((o) => o.id === ownerId);
 }
 
 type DeviceFormState = {
@@ -404,6 +413,7 @@ export default function DeviceManager() {
               }
             : d,
         );
+        closeDrawer();
       } catch {
         setSettingsError("Could not save settings to browser storage.");
       } finally {
@@ -423,6 +433,7 @@ export default function DeviceManager() {
       setDrawerDevice((d) =>
         d && d.id === drawerDevice.id ? { ...d, ...updated } : d,
       );
+      closeDrawer();
     } catch (e: unknown) {
       const msg =
         e && typeof e === "object" && "response" in e
@@ -587,12 +598,22 @@ export default function DeviceManager() {
   };
 
   const sortedDevices = useMemo(() => {
-    return [...devices].sort((a, b) => {
+    const withOwners = devices.map((device) => {
+      const owner = ownerForDevice(device, registeredUsers);
+      if (!owner) return device;
+      return {
+        ...device,
+        user_display_name: owner.displayName,
+        user_email: owner.email,
+      };
+    });
+
+    return [...withOwners].sort((a, b) => {
       const dateA = new Date(a.last_seen || a.updated_at || 0).getTime();
       const dateB = new Date(b.last_seen || b.updated_at || 0).getTime();
       return dateB - dateA;
     });
-  }, [devices]);
+  }, [devices, registeredUsers]);
 
   const ownerUsernameSlug = useMemo(() => {
     if (!user?.first_name && !user?.last_name) return "";
@@ -611,7 +632,7 @@ export default function DeviceManager() {
       const email =
         device.user_email?.trim() || `${username}@geozone.io`;
       const ui = deriveUiStatus(device);
-      const active = ui === "online";
+      const active = device.active;
       const highlight =
         (!!user?.email &&
           device.user_email?.toLowerCase() === user.email.toLowerCase()) ||
@@ -662,14 +683,14 @@ export default function DeviceManager() {
               </span>
             </p>
           </div>
-          <button
+          {/* <button
             type="button"
             onClick={openAddModal}
             className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md px-5 py-3 text-sm font-bold text-[#0B0E11] transition hover:brightness-110"
             style={{ backgroundColor: ACCENT }}
           >
             <Plus size={18} strokeWidth={2.5} /> Add device
-          </button>
+          </button> */}
         </div>
       </section>
 

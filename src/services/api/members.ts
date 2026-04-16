@@ -3,9 +3,15 @@ import { request } from "./client";
 export type Member = {
   id: string;
   name: string;
+  location?: {
+    latitude: number;
+    longitude: number;
+  };
   latitude?: number;
   longitude?: number;
   zoneId?: string;
+  lastSeen?: string;
+  zones?: string[];
 };
 
 export async function getMembers() {

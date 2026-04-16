@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from "axios";
 
-const API_BASE_URL =
+export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://hex-zone-server.onrender.com";
 
 const TOKEN_KEY = "zoneweaver_token";
@@ -9,6 +9,7 @@ const REMEMBER_KEY = "zoneweaver_remember";
 export type ApiEnvelope<T> = {
   status: "success" | "error";
   data: T;
+  error?: { message?: string } | null;
   message?: string;
 };
 
@@ -68,8 +69,20 @@ function normalizeApiData<T>(raw: unknown): T {
   return raw as T;
 }
 
+function normalizeEnvelopeError(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  if (!("status" in raw)) return null;
+  const row = raw as ApiEnvelope<unknown>;
+  if (row.status !== "error") return null;
+  const envelopeError =
+    row.error && typeof row.error === "object" ? row.error.message : null;
+  return envelopeError || row.message || "Request failed";
+}
+
 function toErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
+    const envelopeError = normalizeEnvelopeError(error.response?.data);
+    if (envelopeError) return envelopeError;
     const message =
       (error.response?.data as { message?: string } | undefined)?.message ||
       error.message;

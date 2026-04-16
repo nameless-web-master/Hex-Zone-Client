@@ -127,6 +127,12 @@ export async function register(payload: RegisterPayload) {
   });
 }
 
+export async function getProfile() {
+  const primary = await request<AuthUser>({ method: "GET", url: "/me" });
+  if (primary.data) return primary;
+  return request<AuthUser>({ method: "GET", url: "/owners/me" });
+}
+
 export function logout() {
   clearStoredToken();
 }

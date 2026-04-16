@@ -7,12 +7,16 @@ import {
   type ReactNode,
 } from "react";
 import {
+  createDevice,
+  getProfile,
+  getDevices,
   getRememberMe,
+  request,
+  sendDeviceHeartbeat,
   getStoredToken,
   login as authLogin,
   logout as authLogout,
   register as authRegister,
-  request,
   type AuthUser,
   type RegisterPayload,
 } from "../../services/api";
@@ -39,10 +43,77 @@ type AuthContextValue = {
     options?: { rememberMe?: boolean },
   ) => Promise<void>;
   register: (payload: RegisterPayload | LegacyRegisterPayload) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const DEVICE_HID_KEY = "zoneweaver_device_hid";
+
+function randomHidSuffix(len = 8): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < len; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)] ?? "X";
+  }
+  return out;
+}
+
+function getOrCreateDeviceHid(): string {
+  const existing = localStorage.getItem(DEVICE_HID_KEY);
+  if (existing) return existing;
+  const next = `WEB-${randomHidSuffix()}`;
+  localStorage.setItem(DEVICE_HID_KEY, next);
+  return next;
+}
+
+async function upsertCurrentDevice(user: AuthUser | null) {
+  if (!user) return;
+  const hid = getOrCreateDeviceHid();
+  const displayName = user.name?.trim() || user.email?.trim() || "Web Device";
+  const payload = {
+    hid,
+    name: `${displayName} (Web)`,
+    enable_notification: true,
+    propagate_enabled: true,
+  };
+
+  const devices = await getDevices();
+  const list = devices.data ?? [];
+  const existing = list.find((d) => String(d.hid).toUpperCase() === hid);
+
+  if (existing?.id != null) {
+    await request({
+      method: "PATCH",
+      url: `/devices/${existing.id}`,
+      data: { is_online: true },
+    });
+    await sendDeviceHeartbeat(existing.id);
+    return;
+  }
+  const created = await createDevice(payload);
+  if (created.data?.id != null) {
+    await request({
+      method: "PATCH",
+      url: `/devices/${created.data.id}`,
+      data: { is_online: true },
+    });
+    await sendDeviceHeartbeat(created.data.id);
+  }
+}
+
+async function setCurrentDeviceOffline() {
+  const hid = localStorage.getItem(DEVICE_HID_KEY);
+  if (!hid) return;
+  const devices = await getDevices();
+  const list = devices.data ?? [];
+  const existing = list.find((d) => String(d.hid).toUpperCase() === hid);
+  if (!existing?.id) return;
+  await request({
+    method: "PATCH",
+    url: `/devices/${existing.id}`,
+    data: { is_online: false },
+  });
+}
 
 function parseJwtExp(token: string): number | null {
   try {
@@ -95,16 +166,26 @@ function normalizeUser(raw: AuthUser | null): AuthUser | null {
 }
 
 async function fetchCurrentUser() {
-  const me = await request<AuthUser>({ method: "GET", url: "/me" });
-  if (me.data) return me;
-  const legacyMe = await request<AuthUser>({ method: "GET", url: "/owners/me" });
-  return legacyMe;
+  return getProfile();
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => getStoredToken());
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const performLogout = async (markOffline: boolean) => {
+    if (markOffline) {
+      try {
+        await setCurrentDeviceOffline();
+      } catch {
+        // Logout should still proceed if offline sync fails.
+      }
+    }
+    authLogout();
+    setToken(null);
+    setUser(null);
+  };
 
   const refreshUser = async () => {
     if (!token || isExpired(token)) return;
@@ -119,9 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!token) return;
     if (isExpired(token)) {
-      authLogout();
-      setToken(null);
-      setUser(null);
+      void performLogout(false);
       return;
     }
 
@@ -148,20 +227,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token]);
 
   useEffect(() => {
+    if (!token || !user) return;
+    void upsertCurrentDevice(user).catch(() => {
+      // Device sync should never block auth UX.
+    });
+  }, [token, user]);
+
+  useEffect(() => {
     if (!token) return;
     const exp = parseJwtExp(token);
     if (!exp) return;
     const timeoutMs = exp * 1000 - Date.now();
     if (timeoutMs <= 0) {
-      authLogout();
-      setToken(null);
-      setUser(null);
+      void performLogout(false);
       return;
     }
     const timeout = window.setTimeout(() => {
-      authLogout();
-      setToken(null);
-      setUser(null);
+      void performLogout(false);
     }, timeoutMs);
     return () => window.clearTimeout(timeout);
   }, [token]);
@@ -178,11 +260,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setToken(result.data.token);
     if (result.data.user?.id) {
-      setUser(normalizeUser(result.data.user));
+      const normalized = normalizeUser(result.data.user);
+      setUser(normalized);
     } else {
       const me = await fetchCurrentUser();
       if (!me.data) throw new Error(me.error ?? "Could not load profile");
-      setUser(normalizeUser(me.data));
+      const normalized = normalizeUser(me.data);
+      setUser(normalized);
     }
   };
 
@@ -195,10 +279,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const logout = () => {
-    authLogout();
-    setToken(null);
-    setUser(null);
+  const logout = async () => {
+    await performLogout(true);
   };
 
   const value = useMemo(

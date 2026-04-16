@@ -10,7 +10,9 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('zoneweaver_token');
+  const token =
+    localStorage.getItem('zoneweaver_token') ||
+    sessionStorage.getItem('zoneweaver_token');
   if (token && config.headers) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -136,7 +138,7 @@ export interface DeviceResponse {
   owner_id?: number;
   propagate_enabled?: boolean;
   propagate_radius_km?: number | null;
-  active?: boolean;
+  active: boolean;
   is_online?: boolean;
   last_seen?: string | null;
   enable_notification?: boolean;

@@ -40,17 +40,20 @@ export function MessageList({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className="rounded-full bg-slate-900 px-2 py-0.5 text-slate-300">
-                      {message.zoneId}
+                      {message.zone_id}
                     </span>
                     <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[#00E5D1]">
-                      {message.type}
+                      {message.visibility}
+                    </span>
+                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-slate-400">
+                      from {message.sender_id}
                     </span>
                     <span className="text-slate-500">
-                      {new Date(message.createdAt).toLocaleString()}
+                      {new Date(message.created_at).toLocaleString()}
                     </span>
                   </div>
                   <p className="mt-2 line-clamp-2 text-sm text-slate-200">
-                    {message.text}
+                    {message.message}
                   </p>
                 </div>
               </div>

@@ -6,7 +6,13 @@ export type ZoneType =
   | "grid"
   | "dynamic"
   | "proximity"
-  | "object";
+  | "object"
+  | "geofence"
+  | "warn"
+  | "alert"
+  | "restricted"
+  | "custom_1"
+  | "custom_2";
 
 export type Zone = {
   id: string;

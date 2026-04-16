@@ -3,20 +3,24 @@ import { Smartphone } from "lucide-react";
 import { MessageList } from "../components/messages/MessageList";
 import { MessageDetail } from "../components/messages/MessageDetail";
 import { useMessageFeed } from "../hooks/useMessageFeed";
-import { sendMessage, type MessageType } from "../services/api/messages";
+import { sendMessage, type MessageVisibility } from "../services/api/messages";
 import { useAuth } from "../hooks/useAuth";
 
 export default function Messages() {
   const { user } = useAuth();
   const userZoneId = user?.zoneId ?? user?.zone_id;
+  const ownerId = Number(user?.id);
   const [zoneFilter, setZoneFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState<"all" | MessageType>("all");
+  const [visibilityFilter, setVisibilityFilter] = useState<
+    "all" | MessageVisibility
+  >("all");
   const [dateFilter, setDateFilter] = useState("");
   const [search, setSearch] = useState("");
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
 
-  const [composeZoneId, setComposeZoneId] = useState(String(userZoneId ?? ""));
-  const [composeType, setComposeType] = useState<MessageType>("NORMAL");
+  const [composeVisibility, setComposeVisibility] =
+    useState<MessageVisibility>("public");
+  const [composeReceiverId, setComposeReceiverId] = useState("");
   const [composeText, setComposeText] = useState("");
   const [composeStatus, setComposeStatus] = useState("");
 
@@ -26,35 +30,58 @@ export default function Messages() {
 
   const filteredMessages = useMemo(() => {
     return messages.filter((message) => {
-      if (zoneFilter !== "all" && message.zoneId !== zoneFilter) return false;
-      if (typeFilter !== "all" && message.type !== typeFilter) return false;
+      if (zoneFilter !== "all" && message.zone_id !== zoneFilter) return false;
+      if (
+        visibilityFilter !== "all" &&
+        message.visibility !== visibilityFilter
+      ) {
+        return false;
+      }
       if (dateFilter) {
-        const ymd = new Date(message.createdAt).toISOString().slice(0, 10);
+        const ymd = new Date(message.created_at).toISOString().slice(0, 10);
         if (ymd !== dateFilter) return false;
       }
       const q = search.trim().toLowerCase();
       if (!q) return true;
       return (
-        message.text.toLowerCase().includes(q) ||
-        message.zoneId.toLowerCase().includes(q)
+        message.message.toLowerCase().includes(q) ||
+        message.zone_id.toLowerCase().includes(q) ||
+        String(message.sender_id).includes(q) ||
+        String(message.receiver_id ?? "").includes(q)
       );
     });
-  }, [messages, zoneFilter, typeFilter, dateFilter, search]);
+  }, [messages, zoneFilter, visibilityFilter, dateFilter, search]);
 
   const activeMessage =
     filteredMessages.find((msg) => msg.id === activeMessageId) ?? null;
 
   const handleSend = async () => {
-    if (!composeZoneId.trim() || !composeText.trim()) return;
+    if (!composeText.trim()) return;
+    if (composeVisibility === "private" && !composeReceiverId.trim()) {
+      setComposeStatus("Receiver ID is required for private messages.");
+      return;
+    }
+    const parsedReceiverId = Number(composeReceiverId.trim());
+    if (
+      composeVisibility === "private" &&
+      (!Number.isFinite(parsedReceiverId) || parsedReceiverId <= 0)
+    ) {
+      setComposeStatus("Receiver ID must be a valid owner id.");
+      return;
+    }
     setComposeStatus("Sending...");
     const result = await sendMessage({
-      zoneId: composeZoneId.trim(),
-      type: composeType,
-      text: composeText.trim(),
-      metadata: {},
+      message: composeText.trim(),
+      visibility: composeVisibility,
+      ...(composeVisibility === "private"
+        ? { receiver_id: parsedReceiverId }
+        : {}),
     });
     setComposeStatus(result.error ? "Send failed." : "Sent.");
-    if (!result.error) setComposeText("");
+    if (!result.error) {
+      setComposeText("");
+      if (composeVisibility === "private") setComposeReceiverId("");
+    }
   };
 
   return (
@@ -85,15 +112,15 @@ export default function Messages() {
           ))}
         </select>
         <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value as "all" | MessageType)}
+          value={visibilityFilter}
+          onChange={(e) =>
+            setVisibilityFilter(e.target.value as "all" | MessageVisibility)
+          }
           className="rounded-md border border-[#00E5D1]/45 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
         >
-          <option value="all">All types</option>
-          <option value="NORMAL">NORMAL</option>
-          <option value="PANIC">PANIC</option>
-          <option value="NS_PANIC">NS_PANIC</option>
-          <option value="SENSOR">SENSOR</option>
+          <option value="all">All visibility</option>
+          <option value="public">public</option>
+          <option value="private">private</option>
         </select>
         <input
           type="date"
@@ -129,22 +156,24 @@ export default function Messages() {
             <p className="text-xs font-medium uppercase tracking-[0.25em] text-slate-500">
               Compose
             </p>
-            <input
-              value={composeZoneId}
-              onChange={(e) => setComposeZoneId(e.target.value)}
-              placeholder="Zone ID"
-              className="w-full rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
-            />
             <select
-              value={composeType}
-              onChange={(e) => setComposeType(e.target.value as MessageType)}
+              value={composeVisibility}
+              onChange={(e) =>
+                setComposeVisibility(e.target.value as MessageVisibility)
+              }
               className="w-full rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
             >
-              <option value="NORMAL">NORMAL</option>
-              <option value="PANIC">PANIC</option>
-              <option value="NS_PANIC">NS_PANIC</option>
-              <option value="SENSOR">SENSOR</option>
+              <option value="public">Public message</option>
+              <option value="private">Private message</option>
             </select>
+            {composeVisibility === "private" && (
+              <input
+                value={composeReceiverId}
+                onChange={(e) => setComposeReceiverId(e.target.value)}
+                placeholder="Receiver owner ID"
+                className="w-full rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
+              />
+            )}
             <textarea
               rows={4}
               value={composeText}
@@ -159,6 +188,9 @@ export default function Messages() {
             >
               Send Message
             </button>
+            <p className="text-xs text-slate-500">
+              Sending as owner <span className="font-mono">{ownerId || "?"}</span>
+            </p>
             {composeStatus && <p className="text-xs text-slate-500">{composeStatus}</p>}
           </section>
         </div>

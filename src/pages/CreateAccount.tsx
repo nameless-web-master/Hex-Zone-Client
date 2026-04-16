@@ -20,21 +20,48 @@ const labelClass =
 const inputClass = `${panelBg} w-full rounded-md border border-slate-700/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`;
 
 const accountOptions: {
-  value: "private" | "exclusive";
+  value: "private" | "exclusive" | "private_plus" | "enhanced" | "enhanced_plus";
   title: string;
   lines: [string, string];
+  available: boolean;
 }[] = [
   {
     value: "private",
     title: "Private",
     lines: ["Many users, 1 device each", "Shared zone type"],
+    available: true,
   },
   {
     value: "exclusive",
     title: "Exclusive",
     lines: ["1 user, 1 device", "Any zone type"],
+    available: true,
+  },
+  {
+    value: "private_plus",
+    title: "Private+",
+    lines: ["Planned backend support", "Feature flagged for now"],
+    available: false,
+  },
+  {
+    value: "enhanced",
+    title: "Enhanced",
+    lines: ["Planned backend support", "Feature flagged for now"],
+    available: false,
+  },
+  {
+    value: "enhanced_plus",
+    title: "Enhanced+",
+    lines: ["Planned backend support", "Feature flagged for now"],
+    available: false,
   },
 ];
+
+function isSelectableAccountType(
+  value: (typeof accountOptions)[number]["value"],
+): value is "private" | "exclusive" {
+  return value === "private" || value === "exclusive";
+}
 
 export default function CreateAccount() {
   const navigate = useNavigate();
@@ -58,6 +85,7 @@ export default function CreateAccount() {
   const [existingZoneId, setExistingZoneId] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [registrationCode, setRegistrationCode] = useState("");
 
   const center = useMemo<[number, number]>(
     () => addressCoords ?? addressToMockCoords(address),
@@ -75,14 +103,13 @@ export default function CreateAccount() {
 
     try {
       await register({
+        name: `${firstName} ${lastName}`.trim(),
         email,
         password,
-        first_name: firstName,
-        last_name: lastName,
-        account_type: accountType,
+        accountType: accountType === "exclusive" ? "EXCLUSIVE" : "PRIVATE",
         address,
         phone: phone || undefined,
-        zone_id: selectedZoneId,
+        zoneId: selectedZoneId,
       });
       navigate("/login");
     } catch {
@@ -203,16 +230,28 @@ export default function CreateAccount() {
                       <button
                         key={option.value}
                         type="button"
-                        onClick={() => setAccountType(option.value)}
+                        onClick={() => {
+                          if (option.available && isSelectableAccountType(option.value)) {
+                            setAccountType(option.value);
+                          }
+                        }}
+                        disabled={!option.available}
                         className={`rounded-md border px-4 py-4 text-left transition ${
                           active
                             ? `border-[#00E5D1] bg-[#00E5D1]/10 shadow-[0_0_24px_-8px_rgba(0,229,209,0.45)]`
                             : "border-slate-700/80 bg-[#151a20] hover:border-slate-600"
-                        }`}
+                        } ${!option.available ? "cursor-not-allowed opacity-60" : ""}`}
                       >
-                        <p className="font-semibold text-white">
-                          {option.title}
-                        </p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-white">
+                            {option.title}
+                          </p>
+                          {!option.available && (
+                            <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                              Planned
+                            </span>
+                          )}
+                        </div>
                         <p className="mt-2 text-sm text-slate-400">
                           {option.lines[0]}
                         </p>
@@ -223,6 +262,23 @@ export default function CreateAccount() {
                     );
                   })}
                 </div>
+              </div>
+
+              <div className="rounded-md border border-dashed border-slate-700/80 bg-[#151a20] p-4">
+                <label htmlFor="reg-code" className={labelClass}>
+                  Registration code (planned)
+                </label>
+                <input
+                  id="reg-code"
+                  value={registrationCode}
+                  onChange={(e) => setRegistrationCode(e.target.value)}
+                  disabled
+                  placeholder="Backend validation endpoint pending"
+                  className={`${inputClass} cursor-not-allowed opacity-70`}
+                />
+                <p className="mt-2 text-xs text-slate-500">
+                  UI placeholder only. Validation flow will be enabled when backend support is available.
+                </p>
               </div>
 
               <div className="rounded-md border border-slate-700/80 bg-[#151a20] p-4">
