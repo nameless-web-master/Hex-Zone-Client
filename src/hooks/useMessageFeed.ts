@@ -1,9 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listMessages, type Message } from "../services/api/messages";
-import {
-  defaultRealtimeWsBase,
-  parseMessageSocketPayload,
-} from "../services/socket/messageSocket";
+import { parseMessageSocketPayload } from "../services/socket/messageSocket";
 import { useAuth } from "./useAuth";
 import { useAppState } from "../state/app/AppStateContext";
 import { useWebSocket } from "./useWebSocket";
@@ -22,16 +19,6 @@ export function useMessageFeed(zoneIds: string[]) {
   const [error, setError] = useState<string | null>(null);
   const ownerId = Number(user?.id);
 
-  const zoneIdsRef = useRef(zoneIds);
-  zoneIdsRef.current = zoneIds;
-  const zoneKey = useMemo(() => JSON.stringify(zoneIds), [zoneIds]);
-
-  const wsUrl = useMemo(() => {
-    if (!token) return null;
-    const base = defaultRealtimeWsBase();
-    return `${base}?token=${encodeURIComponent(token)}`;
-  }, [token]);
-
   const applyMessage = useCallback(
     (incoming: Message) => {
       setLocalMessages((prev) => {
@@ -47,26 +34,28 @@ export function useMessageFeed(zoneIds: string[]) {
     [setGlobalMessages],
   );
 
-  const { send } = useWebSocket(wsUrl, {
-    buildOpenFrames: () =>
-      zoneIdsRef.current.length > 0
-        ? [JSON.stringify({ type: "SUBSCRIBE", zoneIds: zoneIdsRef.current })]
-        : [],
-    onMessage: (ev) => {
-      if (typeof ev.data !== "string") return;
-      const incoming = parseMessageSocketPayload(ev.data);
-      if (incoming) applyMessage(incoming);
-    },
-    onError: () => {
-      setError("WebSocket connection error");
-    },
+  const { lastMessage, status } = useWebSocket({
+    token,
+    zoneIds,
   });
 
   useEffect(() => {
-    if (!wsUrl) return;
-    if (zoneIdsRef.current.length === 0) return;
-    send(JSON.stringify({ type: "SUBSCRIBE", zoneIds: zoneIdsRef.current }));
-  }, [wsUrl, send, zoneKey]);
+    if (!lastMessage) return;
+    const incoming = parseMessageSocketPayload(lastMessage);
+    if (incoming) {
+      applyMessage(incoming);
+    }
+  }, [lastMessage, applyMessage]);
+
+  useEffect(() => {
+    if (status === "closed" && token) {
+      setError("WebSocket connection error");
+      return;
+    }
+    if (status === "open") {
+      setError(null);
+    }
+  }, [status, token]);
 
   useEffect(() => {
     if (!Number.isFinite(ownerId) || ownerId <= 0 || !token) {

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { defaultRealtimeWsBase } from "../services/socket/messageSocket";
 
 /**
  * Reusable WebSocket hook for React 18 + Strict Mode.
@@ -11,21 +12,11 @@ import { useCallback, useEffect, useRef } from "react";
  * - **Logging:** URLs are logged with `token` query redacted; message bodies truncated (never log JWTs).
  */
 
-export type UseWebSocketOptions = {
-  enabled?: boolean;
-  protocols?: string | string[];
-  /**
-   * JSON strings to send immediately after each successful `open` (including reconnects).
-   * Use a ref inside the factory for values that change without changing `url`.
-   */
-  buildOpenFrames?: () => string[];
-  reconnect?: boolean;
-  maxBackoffMs?: number;
-  initialBackoffMs?: number;
-  onOpen?: (event: Event) => void;
-  onMessage?: (event: MessageEvent) => void;
-  onClose?: (event: CloseEvent) => void;
-  onError?: (event: Event) => void;
+export type WebSocketStatus = "connecting" | "open" | "closed";
+
+export type UseWebSocketParams = {
+  token: string | null;
+  zoneIds: string[];
 };
 
 const LOG_PREFIX = "[WebSocket]";
@@ -51,197 +42,262 @@ function previewPayload(data: string, max = 500): string {
   return `${data.slice(0, max)}…`;
 }
 
-export function useWebSocket(
-  url: string | null,
-  options: UseWebSocketOptions = {},
-) {
-  const enabled = options.enabled ?? true;
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<number | null>(null);
-  const attemptRef = useRef(0);
-  const manualCloseRef = useRef(false);
-  const optsRef = useRef(options);
-  optsRef.current = options;
+type Snapshot = {
+  status: WebSocketStatus;
+  lastMessage: string | null;
+};
 
-  const clearReconnectTimer = useCallback(() => {
-    if (reconnectTimerRef.current != null) {
-      window.clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-  }, []);
+type Listener = (snapshot: Snapshot) => void;
 
-  const send = useCallback((data: string) => {
-    const w = wsRef.current;
-    if (w?.readyState === WebSocket.OPEN) {
-      w.send(data);
-      log("log", "send", previewPayload(data, 200));
-      return true;
+type SharedManager = {
+  ws: WebSocket | null;
+  status: WebSocketStatus;
+  lastMessage: string | null;
+  listeners: Set<Listener>;
+  reconnectTimer: number | null;
+  reconnectAttempt: number;
+  activeUsers: number;
+  token: string | null;
+  zoneIds: string[];
+  connectionSeq: number;
+};
+
+const INITIAL_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 30000;
+const sharedManager: SharedManager = {
+  ws: null,
+  status: "closed",
+  lastMessage: null,
+  listeners: new Set(),
+  reconnectTimer: null,
+  reconnectAttempt: 0,
+  activeUsers: 0,
+  token: null,
+  zoneIds: [],
+  connectionSeq: 0,
+};
+
+function snapshot(): Snapshot {
+  return {
+    status: sharedManager.status,
+    lastMessage: sharedManager.lastMessage,
+  };
+}
+
+function emitSnapshot() {
+  const next = snapshot();
+  for (const listener of sharedManager.listeners) {
+    listener(next);
+  }
+}
+
+function clearReconnectTimer() {
+  if (sharedManager.reconnectTimer != null) {
+    window.clearTimeout(sharedManager.reconnectTimer);
+    sharedManager.reconnectTimer = null;
+  }
+}
+
+function closeSocket(reason: string) {
+  clearReconnectTimer();
+  const ws = sharedManager.ws;
+  sharedManager.ws = null;
+  if (ws) {
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onclose = null;
+    ws.onerror = null;
+    ws.close(1000, reason);
+  }
+  sharedManager.status = "closed";
+  emitSnapshot();
+}
+
+function buildSocketUrl(token: string): string {
+  const base = defaultRealtimeWsBase();
+  return `${base}?token=${encodeURIComponent(token)}`;
+}
+
+function sendSubscribeFrame() {
+  if (sharedManager.zoneIds.length === 0) return;
+  const ws = sharedManager.ws;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const frame = JSON.stringify({
+    type: "SUBSCRIBE",
+    zoneIds: sharedManager.zoneIds,
+  });
+  ws.send(frame);
+  log("log", "initial frame sent", previewPayload(frame, 200));
+}
+
+function scheduleReconnect() {
+  if (!sharedManager.token || sharedManager.activeUsers === 0) return;
+  clearReconnectTimer();
+  const backoff = Math.min(
+    MAX_BACKOFF_MS,
+    INITIAL_BACKOFF_MS * 2 ** sharedManager.reconnectAttempt,
+  );
+  sharedManager.reconnectAttempt += 1;
+  const jitter = Math.floor(Math.random() * 400);
+  const delay = backoff + jitter;
+  log("log", "reconnect scheduled", {
+    delayMs: delay,
+    attempt: sharedManager.reconnectAttempt,
+  });
+  sharedManager.reconnectTimer = window.setTimeout(() => {
+    sharedManager.reconnectTimer = null;
+    connectSocket();
+  }, delay);
+}
+
+function connectSocket() {
+  if (!sharedManager.token || sharedManager.activeUsers === 0) return;
+  if (
+    sharedManager.ws &&
+    (sharedManager.ws.readyState === WebSocket.OPEN ||
+      sharedManager.ws.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  const token = sharedManager.token;
+  const url = buildSocketUrl(token);
+  sharedManager.status = "connecting";
+  emitSnapshot();
+
+  const connectionId = ++sharedManager.connectionSeq;
+  log("log", `connecting #${connectionId}`, maskUrlForLog(url));
+
+  let ws: WebSocket;
+  try {
+    ws = new WebSocket(url);
+  } catch (error) {
+    log("error", `constructor failed #${connectionId}`, error);
+    sharedManager.status = "closed";
+    emitSnapshot();
+    scheduleReconnect();
+    return;
+  }
+
+  sharedManager.ws = ws;
+
+  ws.onopen = () => {
+    if (sharedManager.ws !== ws) return;
+    sharedManager.reconnectAttempt = 0;
+    sharedManager.status = "open";
+    emitSnapshot();
+    log("log", `open #${connectionId}`);
+    sendSubscribeFrame();
+  };
+
+  ws.onmessage = (event) => {
+    if (sharedManager.ws !== ws) return;
+    const payload = typeof event.data === "string" ? event.data : String(event.data);
+    sharedManager.lastMessage = payload;
+    emitSnapshot();
+    log("log", `message #${connectionId}`, previewPayload(payload));
+  };
+
+  ws.onerror = (event) => {
+    if (sharedManager.ws !== ws) return;
+    log("error", `error #${connectionId}`, event);
+  };
+
+  ws.onclose = (event) => {
+    if (sharedManager.ws === ws) {
+      sharedManager.ws = null;
     }
-    log("warn", "send skipped (socket not OPEN)", { readyState: w?.readyState });
-    return false;
-  }, []);
+    sharedManager.status = "closed";
+    emitSnapshot();
+    log("warn", `close #${connectionId}`, {
+      code: event.code,
+      reason: event.reason || "(none)",
+      wasClean: event.wasClean,
+    });
+    if (sharedManager.activeUsers > 0) {
+      scheduleReconnect();
+    }
+  };
+}
+
+function setToken(token: string | null) {
+  if (sharedManager.token === token) return;
+  sharedManager.token = token;
+  closeSocket("token updated");
+  if (token) {
+    connectSocket();
+  }
+}
+
+function setZoneIds(zoneIds: string[]) {
+  const same =
+    sharedManager.zoneIds.length === zoneIds.length &&
+    sharedManager.zoneIds.every((id, idx) => id === zoneIds[idx]);
+  if (same) return;
+  sharedManager.zoneIds = [...zoneIds];
+  sendSubscribeFrame();
+}
+
+export function useWebSocket({ token, zoneIds }: UseWebSocketParams) {
+  const [state, setState] = useState<Snapshot>(() => snapshot());
+  const zoneKey = useMemo(() => JSON.stringify(zoneIds), [zoneIds]);
 
   useEffect(() => {
-    if (!url || !enabled) {
-      log("log", "inactive: closing socket", { hasUrl: Boolean(url), enabled });
-      manualCloseRef.current = true;
-      clearReconnectTimer();
-      const existing = wsRef.current;
-      if (existing) {
-        existing.close(1000, "inactive");
-        wsRef.current = null;
-      }
-      manualCloseRef.current = false;
-      return;
-    }
-
-    manualCloseRef.current = false;
-    attemptRef.current = 0;
-
-    const scheduleReconnect = () => {
-      clearReconnectTimer();
-      if (manualCloseRef.current) return;
-      const wantReconnect = optsRef.current.reconnect ?? true;
-      if (!wantReconnect) return;
-
-      const maxBackoff = optsRef.current.maxBackoffMs ?? 30_000;
-      const initialBackoff = optsRef.current.initialBackoffMs ?? 1_000;
-      const attempt = attemptRef.current;
-      const backoff = Math.min(maxBackoff, initialBackoff * 2 ** attempt);
-      attemptRef.current += 1;
-      const jitter = Math.floor(Math.random() * 400);
-      const delay = backoff + jitter;
-
-      log("log", "reconnect scheduled", { delayMs: delay, attempt: attemptRef.current });
-
-      reconnectTimerRef.current = window.setTimeout(() => {
-        reconnectTimerRef.current = null;
-        if (manualCloseRef.current) return;
-        openSocket();
-      }, delay);
-    };
-
-    const openSocket = () => {
-      if (manualCloseRef.current) return;
-
-      const prev = wsRef.current;
-      if (prev) {
-        prev.onopen = null;
-        prev.onmessage = null;
-        prev.onerror = null;
-        prev.onclose = null;
-        prev.close(1000, "replaced");
-        wsRef.current = null;
-      }
-
-      const protocols = optsRef.current.protocols;
-      log("log", "connecting", maskUrlForLog(url));
-
-      let ws: WebSocket;
-      try {
-        ws = protocols != null ? new WebSocket(url, protocols) : new WebSocket(url);
-      } catch (e) {
-        log("error", "constructor failed", e);
-        scheduleReconnect();
-        return;
-      }
-
-      wsRef.current = ws;
-
-      ws.onopen = (ev) => {
-        if (wsRef.current !== ws) return;
-        log("log", "open", { url: maskUrlForLog(url) });
-        attemptRef.current = 0;
-        optsRef.current.onOpen?.(ev);
-
-        const frames = optsRef.current.buildOpenFrames?.() ?? [];
-        for (const frame of frames) {
-          try {
-            ws.send(frame);
-            log("log", "initial frame sent", previewPayload(frame, 200));
-          } catch (e) {
-            log("error", "initial send failed", e);
-          }
-        }
-      };
-
-      ws.onmessage = (ev) => {
-        if (wsRef.current !== ws) return;
-        const body =
-          typeof ev.data === "string" ? previewPayload(ev.data) : "[non-text]";
-        log("log", "message", body);
-        optsRef.current.onMessage?.(ev);
-      };
-
-      ws.onerror = (ev) => {
-        if (wsRef.current !== ws) return;
-        log("error", "error event");
-        optsRef.current.onError?.(ev);
-      };
-
-      ws.onclose = (ev) => {
-        if (wsRef.current === ws) {
-          wsRef.current = null;
-        }
-        log("log", "close", {
-          code: ev.code,
-          reason: ev.reason || "(none)",
-          wasClean: ev.wasClean,
-        });
-        optsRef.current.onClose?.(ev);
-
-        const userInitiated = manualCloseRef.current;
-        const wantReconnect = optsRef.current.reconnect ?? true;
-        if (!userInitiated && wantReconnect) {
-          scheduleReconnect();
-        }
-      };
-    };
-
-    openSocket();
+    const listener: Listener = (next) => setState(next);
+    sharedManager.listeners.add(listener);
+    sharedManager.activeUsers += 1;
+    setToken(token);
+    setZoneIds(zoneIds);
+    connectSocket();
 
     return () => {
-      log("log", "cleanup: disconnecting");
-      manualCloseRef.current = true;
-      clearReconnectTimer();
-      const w = wsRef.current;
-      wsRef.current = null;
-      if (w) {
-        w.onopen = null;
-        w.onmessage = null;
-        w.onerror = null;
-        w.onclose = null;
-        w.close(1000, "client cleanup");
+      sharedManager.listeners.delete(listener);
+      sharedManager.activeUsers = Math.max(0, sharedManager.activeUsers - 1);
+      if (sharedManager.activeUsers === 0) {
+        closeSocket("no subscribers");
       }
-      manualCloseRef.current = false;
     };
-  }, [url, enabled, clearReconnectTimer]);
+    // Keep this stable for Strict Mode and avoid reconnecting on each render.
+    // `zoneIds` updates are handled in the dedicated effect below.
+  }, [token]);
 
-  return { send };
+  useEffect(() => {
+    setZoneIds(zoneIds);
+  }, [zoneKey]);
+
+  const sendMessage = useCallback((payload: unknown) => {
+    const ws = sharedManager.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    const data = typeof payload === "string" ? payload : JSON.stringify(payload);
+    ws.send(data);
+    log("log", "send", previewPayload(data, 200));
+    return true;
+  }, []);
+
+  return {
+    status: state.status,
+    lastMessage: state.lastMessage,
+    sendMessage,
+  };
 }
 
 /**
- * Example (messages / JWT query param):
+ * Example usage:
  *
  * ```tsx
- * const url = useMemo(() => {
- *   if (!token) return null;
- *   return `${wsBase}?token=${encodeURIComponent(token)}`;
- * }, [token, wsBase]);
- *
- * const zoneIdsRef = useRef(zoneIds);
- * zoneIdsRef.current = zoneIds;
- *
- * const { send } = useWebSocket(url, {
- *   buildOpenFrames: () =>
- *     zoneIdsRef.current.length
- *       ? [JSON.stringify({ type: "SUBSCRIBE", zoneIds: zoneIdsRef.current })]
- *       : [],
- *   onMessage: (ev) => console.log(ev.data),
+ * const { status, lastMessage, sendMessage } = useWebSocket({
+ *   token,
+ *   zoneIds: ["zone-123"],
  * });
  *
  * useEffect(() => {
- *   send(JSON.stringify({ type: "SUBSCRIBE", zoneIds }));
- * }, [JSON.stringify(zoneIds), send]);
+ *   if (status === "open") {
+ *     sendMessage({ type: "PING" });
+ *   }
+ * }, [status, sendMessage]);
+ *
+ * console.log(status, lastMessage);
  * ```
  */
