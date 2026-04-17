@@ -23,56 +23,56 @@ export default function App() {
   return (
     <AuthProvider>
       <AppStateProvider>
-        <div className="min-h-screen bg-slate-950 text-slate-100">
+        <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
           <Navbar />
-          <main className="mx-auto max-w-7xl px-5 pt-28">
+          <main className="mx-auto max-w-7xl px-5 pt-28 flex-1">
             <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<CreateAccount />} />
-            <Route path="/join" element={<JoinWithQr />} />
-            <Route path="/api" element={<ApiDocs />} />
-            <Route
-              path="/devices"
-              element={
-                <ProtectedRoute>
-                  <DeviceManager />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/messages"
-              element={
-                <ProtectedRoute>
-                  <Messages />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/members"
-              element={
-                <ProtectedRoute>
-                  <Members />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/qr"
-              element={
-                <ProtectedRoute>
-                  <QrInvite />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="/" element={<Landing />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<CreateAccount />} />
+              <Route path="/join" element={<JoinWithQr />} />
+              <Route path="/api" element={<ApiDocs />} />
+              <Route
+                path="/devices"
+                element={
+                  <ProtectedRoute>
+                    <DeviceManager />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/messages"
+                element={
+                  <ProtectedRoute>
+                    <Messages />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/members"
+                element={
+                  <ProtectedRoute>
+                    <Members />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/qr"
+                element={
+                  <ProtectedRoute>
+                    <QrInvite />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
           <Footer />
