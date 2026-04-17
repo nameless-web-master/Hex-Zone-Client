@@ -76,29 +76,7 @@ export default function Messages() {
     () => Array.from(new Set([...dbZoneIds, ...zones])),
     [dbZoneIds, zones],
   );
-  const selectedComposeZoneId = useMemo(() => {
-    if (zoneFilter !== "all") return zoneFilter;
-    if (userZoneId == null) return null;
-    return String(userZoneId);
-  }, [zoneFilter, userZoneId]);
-  const selectableOwners = useMemo(() => {
-    const filteredByZone = selectedComposeZoneId
-      ? owners.filter(
-          (row) => String(row.zone_id ?? "").trim() === selectedComposeZoneId,
-        )
-      : owners;
-    return filteredByZone.filter((row) => Number(row.id) !== ownerId);
-  }, [owners, selectedComposeZoneId, ownerId]);
-
-  useEffect(() => {
-    if (!composeReceiverId) return;
-    const stillVisible = selectableOwners.some(
-      (row) => String(row.id) === composeReceiverId,
-    );
-    if (!stillVisible) {
-      setComposeReceiverId("");
-    }
-  }, [composeReceiverId, selectableOwners]);
+  const selectableOwners = useMemo(() => owners, [owners]);
 
   const filteredMessages = useMemo(() => {
     return messages.filter((message) => {
@@ -210,12 +188,12 @@ export default function Messages() {
 
       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-3">
-          {error && (
+          {/* {error && (
             <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
               {error}
             </p>
           )}
-           <p className="text-sm text-slate-500">Syncing messages...</p>
+           <p className="text-sm text-slate-500">{loading ? "Syncing messages..." : ""}</p> */}
           <MessageList
             messages={filteredMessages}
             activeId={activeMessageId}
@@ -288,7 +266,7 @@ export default function Messages() {
               <p className="text-xs text-slate-500">
                 {ownersLoading
                   ? "Loading owner IDs from database..."
-                  : `Owner IDs in selected zone: ${selectableOwners.length}`}
+                  : `Owner IDs loaded: ${selectableOwners.length}`}
               </p>
             )}
             {composeStatus && <p className="text-xs text-slate-500">{composeStatus}</p>}
