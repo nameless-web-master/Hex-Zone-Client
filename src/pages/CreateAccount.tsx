@@ -91,7 +91,7 @@ export default function CreateAccount() {
     () => addressCoords ?? addressToMockCoords(address),
     [address, addressCoords],
   );
-  const grid = useMemo<H3Cell[]>(() => getHexGrid(center, 13, 1), [center]);
+  const grid = useMemo<H3Cell[]>(() => getHexGrid(center, 9, 1), [center]);
 
   const selectedZoneId =
     useExistingZone && existingZoneId ? existingZoneId : zoneId;

@@ -24,7 +24,7 @@ export default function Login() {
   const navigate = useNavigate();
 
   const center = AUTH_MAP_DEFAULT_CENTER;
-  const grid = useMemo<H3Cell[]>(() => getHexGrid(center, 13, 1), [center]);
+  const grid = useMemo<H3Cell[]>(() => getHexGrid(center, 9, 1), [center]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
