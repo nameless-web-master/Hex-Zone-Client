@@ -14,6 +14,14 @@ export type AuthUser = {
   account_type?: string;
 };
 
+export type OwnerListItem = {
+  id: number;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  zone_id?: string | number | null;
+};
+
 export type LoginPayload = {
   email: string;
   password: string;
@@ -131,6 +139,20 @@ export async function getProfile() {
   const primary = await request<AuthUser>({ method: "GET", url: "/me" });
   if (primary.data) return primary;
   return request<AuthUser>({ method: "GET", url: "/owners/me" });
+}
+
+export async function getOwners(params?: { skip?: number; limit?: number }) {
+  const primary = await request<OwnerListItem[]>({
+    method: "GET",
+    url: "/owners/",
+    params,
+  });
+  if (primary.data) return primary;
+  return request<OwnerListItem[]>({
+    method: "GET",
+    url: "/owners",
+    params,
+  });
 }
 
 export function logout() {

@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Smartphone } from "lucide-react";
 import { MessageList } from "../components/messages/MessageList";
 import { MessageDetail } from "../components/messages/MessageDetail";
 import { useMessageFeed } from "../hooks/useMessageFeed";
 import { sendMessage, type MessageVisibility } from "../services/api/messages";
+import { getOwners, type OwnerListItem } from "../services/api/auth";
+import { getZones } from "../services/api/zones";
 import { useAuth } from "../hooks/useAuth";
 
 export default function Messages() {
@@ -23,12 +25,80 @@ export default function Messages() {
   const [composeReceiverId, setComposeReceiverId] = useState("");
   const [composeText, setComposeText] = useState("");
   const [composeStatus, setComposeStatus] = useState("");
+  const [dbZoneIds, setDbZoneIds] = useState<string[]>([]);
+  const [zonesLoading, setZonesLoading] = useState(false);
+  const [owners, setOwners] = useState<OwnerListItem[]>([]);
+  const [ownersLoading, setOwnersLoading] = useState(false);
 
-  const messageZoneIds = useMemo(
-    () => (userZoneId ? [String(userZoneId)] : []),
-    [userZoneId],
-  );
+  useEffect(() => {
+    let active = true;
+    setZonesLoading(true);
+    void getZones()
+      .then((result) => {
+        if (!active) return;
+        const zones = result.data ?? [];
+        const ids = zones
+          .map((zone) => String(zone.id ?? "").trim())
+          .filter((id) => id.length > 0);
+        setDbZoneIds(Array.from(new Set(ids)));
+      })
+      .finally(() => {
+        if (active) setZonesLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setOwnersLoading(true);
+    void getOwners({ skip: 0, limit: 500 })
+      .then((result) => {
+        if (!active) return;
+        setOwners(result.data ?? []);
+      })
+      .finally(() => {
+        if (active) setOwnersLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const messageZoneIds = useMemo(() => {
+    if (dbZoneIds.length > 0) return dbZoneIds;
+    return userZoneId ? [String(userZoneId)] : [];
+  }, [dbZoneIds, userZoneId]);
   const { messages, zones, loading, error } = useMessageFeed(messageZoneIds);
+  const allZoneIds = useMemo(
+    () => Array.from(new Set([...dbZoneIds, ...zones])),
+    [dbZoneIds, zones],
+  );
+  const selectedComposeZoneId = useMemo(() => {
+    if (zoneFilter !== "all") return zoneFilter;
+    if (userZoneId == null) return null;
+    return String(userZoneId);
+  }, [zoneFilter, userZoneId]);
+  const selectableOwners = useMemo(() => {
+    const filteredByZone = selectedComposeZoneId
+      ? owners.filter(
+          (row) => String(row.zone_id ?? "").trim() === selectedComposeZoneId,
+        )
+      : owners;
+    return filteredByZone.filter((row) => Number(row.id) !== ownerId);
+  }, [owners, selectedComposeZoneId, ownerId]);
+
+  useEffect(() => {
+    if (!composeReceiverId) return;
+    const stillVisible = selectableOwners.some(
+      (row) => String(row.id) === composeReceiverId,
+    );
+    if (!stillVisible) {
+      setComposeReceiverId("");
+    }
+  }, [composeReceiverId, selectableOwners]);
 
   const filteredMessages = useMemo(() => {
     return messages.filter((message) => {
@@ -59,11 +129,11 @@ export default function Messages() {
 
   const handleSend = async () => {
     if (!composeText.trim()) return;
-    if (composeVisibility === "private" && !composeReceiverId.trim()) {
+    if (composeVisibility === "private" && !composeReceiverId) {
       setComposeStatus("Receiver ID is required for private messages.");
       return;
     }
-    const parsedReceiverId = Number(composeReceiverId.trim());
+    const parsedReceiverId = Number(composeReceiverId);
     if (
       composeVisibility === "private" &&
       (!Number.isFinite(parsedReceiverId) || parsedReceiverId <= 0)
@@ -107,7 +177,7 @@ export default function Messages() {
           className="rounded-md border border-[#00E5D1]/45 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
         >
           <option value="all">All zones</option>
-          {zones.map((zone) => (
+          {allZoneIds.map((zone) => (
             <option key={zone} value={zone}>
               {zone}
             </option>
@@ -145,7 +215,7 @@ export default function Messages() {
               {error}
             </p>
           )}
-          {loading && <p className="text-sm text-slate-500">Syncing messages...</p>}
+           <p className="text-sm text-slate-500">Syncing messages...</p>
           <MessageList
             messages={filteredMessages}
             activeId={activeMessageId}
@@ -169,12 +239,28 @@ export default function Messages() {
               <option value="private">Private message</option>
             </select>
             {composeVisibility === "private" && (
-              <input
-                value={composeReceiverId}
-                onChange={(e) => setComposeReceiverId(e.target.value)}
-                placeholder="Receiver owner ID"
-                className="w-full rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
-              />
+              <>
+                <select
+                  value={composeReceiverId}
+                  onChange={(e) => setComposeReceiverId(e.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
+                >
+                  <option value="">
+                    {ownersLoading ? "Loading owner IDs..." : "Pick receiver owner ID"}
+                  </option>
+                  {selectableOwners.map((row) => {
+                    const name =
+                      `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+                      row.email ||
+                      "Owner";
+                    return (
+                      <option key={`owner-${row.id}`} value={String(row.id)}>
+                        {row.id} - {name}
+                      </option>
+                    );
+                  })}
+                </select>
+              </>
             )}
             <textarea
               rows={4}
@@ -193,6 +279,18 @@ export default function Messages() {
             <p className="text-xs text-slate-500">
               Sending as owner <span className="font-mono">{ownerId || "?"}</span>
             </p>
+            <p className="text-xs text-slate-500">
+              {zonesLoading
+                ? "Loading zone IDs from database..."
+                : `Zone IDs loaded: ${allZoneIds.length}`}
+            </p>
+            {composeVisibility === "private" && (
+              <p className="text-xs text-slate-500">
+                {ownersLoading
+                  ? "Loading owner IDs from database..."
+                  : `Owner IDs in selected zone: ${selectableOwners.length}`}
+              </p>
+            )}
             {composeStatus && <p className="text-xs text-slate-500">{composeStatus}</p>}
           </section>
         </div>
