@@ -76,7 +76,28 @@ export default function Messages() {
     () => Array.from(new Set([...dbZoneIds, ...zones])),
     [dbZoneIds, zones],
   );
-  const selectableOwners = useMemo(() => owners, [owners]);
+  const composeZoneId = useMemo(
+    () => (userZoneId == null ? null : String(userZoneId).trim()),
+    [userZoneId],
+  );
+  const selectableOwners = useMemo(() => {
+    const readOwnerZoneId = (row: OwnerListItem): string => {
+      const loose = row as OwnerListItem & {
+        zoneId?: string | number | null;
+        zone?: { id?: string | number | null } | null;
+      };
+      const raw = loose.zone_id ?? loose.zoneId ?? loose.zone?.id;
+      return raw == null ? "" : String(raw).trim();
+    };
+
+    if (!composeZoneId) return [];
+
+    return owners.filter((row) => {
+      const sameZone = readOwnerZoneId(row) === composeZoneId;
+      const notSelf = Number(row.id) !== ownerId;
+      return sameZone && notSelf;
+    });
+  }, [owners, composeZoneId, ownerId]);
 
   const filteredMessages = useMemo(() => {
     return messages.filter((message) => {
@@ -266,7 +287,7 @@ export default function Messages() {
               <p className="text-xs text-slate-500">
                 {ownersLoading
                   ? "Loading owner IDs from database..."
-                  : `Owner IDs loaded: ${selectableOwners.length}`}
+                  : `Owner IDs in your zone (${composeZoneId ?? "none"}): ${selectableOwners.length}`}
               </p>
             )}
             {composeStatus && <p className="text-xs text-slate-500">{composeStatus}</p>}
