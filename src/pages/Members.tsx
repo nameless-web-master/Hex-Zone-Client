@@ -60,22 +60,6 @@ export default function Members() {
             <p className="mt-1 text-xs text-slate-500">
               Primary zone: {member.zone_id ?? "Unknown"}
             </p>
-            <p className="text-xs text-slate-500">
-              Location:{" "}
-              {member.location?.latitude != null &&
-              member.location?.longitude != null
-                ? `${member.location.latitude.toFixed(5)}, ${member.location.longitude.toFixed(5)}`
-                : "Unavailable"}
-            </p>
-            <p className="text-xs text-slate-500">
-              Last seen: {formatLastSeen(member.lastSeen)}
-            </p>
-            <p className="text-xs text-slate-500">
-              Zones:{" "}
-              {member.zones && member.zones.length > 0
-                ? member.zones.join(", ")
-                : "None"}
-            </p>
           </article>
         ))}
       </div>
