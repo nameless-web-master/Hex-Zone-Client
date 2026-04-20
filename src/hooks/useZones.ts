@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { createZone, fetchZonesByZoneId, updateZone } from "../lib/api";
+import { request } from "../services/api/client";
 
 export type SavedZone = {
   zone_id?: number | string;
   id: number | string;
   name?: string;
   owner_id?: number | string;
+  creator_id?: number | string;
+  zone_type?: string;
   h3_cells?: string[];
   geo_fence?: [number, number][];
   geo_fence_polygon?: unknown;
@@ -21,14 +23,111 @@ function asCellList(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === "string");
 }
 
-function normalizeZoneId(value: unknown): string {
-  return String(value ?? "").trim();
+function asGeoFence(value: unknown): [number, number][] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points = value
+    .map((row) => {
+      if (!Array.isArray(row) || row.length < 2) return null;
+      const lat = Number(row[0]);
+      const lng = Number(row[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return [lat, lng] as [number, number];
+    })
+    .filter((pt): pt is [number, number] => pt !== null);
+  return points.length >= 3 ? points : undefined;
 }
 
-function belongsToZone(zone: SavedZone, ownerZoneId: number | string): boolean {
-  const target = normalizeZoneId(ownerZoneId);
-  if (!target) return false;
-  return normalizeZoneId(zone.zone_id ?? zone.id) === target;
+function normalizeSavedZone(raw: unknown): SavedZone | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const config =
+    row.config && typeof row.config === "object"
+      ? (row.config as Record<string, unknown>)
+      : null;
+
+  const rawId = row.id ?? row.zone_id ?? row.zoneId;
+  if (rawId == null) return null;
+  const rawZoneId = row.zone_id ?? row.zoneId ?? rawId;
+
+  const h3Cells = asCellList(
+    row.h3_cells ?? row.h3Cells ?? config?.h3Cells ?? config?.h3_cells,
+  );
+
+  const rawPolygon =
+    row.geo_fence_polygon ?? row.geometry ?? config?.geometry ?? row.polygons;
+  const rawGeoFence = row.geo_fence ?? config?.geo_fence;
+
+  return {
+    id: String(rawId),
+    zone_id: String(rawZoneId),
+    name: typeof row.name === "string" ? row.name : undefined,
+    owner_id:
+      row.owner_id != null
+        ? (row.owner_id as number | string)
+        : row.ownerId != null
+          ? (row.ownerId as number | string)
+          : row.account_owner_id != null
+            ? (row.account_owner_id as number | string)
+            : row.accountOwnerId != null
+              ? (row.accountOwnerId as number | string)
+              : row.owner &&
+                  typeof row.owner === "object" &&
+                  (row.owner as Record<string, unknown>).id != null
+                ? ((row.owner as Record<string, unknown>).id as number | string)
+              : undefined,
+    creator_id:
+      row.creator_id != null
+        ? (row.creator_id as number | string)
+        : row.creatorId != null
+          ? (row.creatorId as number | string)
+          : row.created_by != null
+            ? (row.created_by as number | string)
+            : row.createdBy != null
+              ? (row.createdBy as number | string)
+              : row.user_id != null
+                ? (row.user_id as number | string)
+                : row.userId != null
+                  ? (row.userId as number | string)
+                  : row.user &&
+                      typeof row.user === "object" &&
+                      (row.user as Record<string, unknown>).id != null
+                    ? ((row.user as Record<string, unknown>).id as number | string)
+                    : undefined,
+    zone_type:
+      typeof row.zone_type === "string"
+        ? row.zone_type
+        : typeof row.type === "string"
+          ? row.type
+          : undefined,
+    h3_cells: h3Cells,
+    geo_fence: asGeoFence(rawGeoFence),
+    geo_fence_polygon: rawPolygon,
+    polygons: row.polygons,
+  };
+}
+
+function normalizeZoneList(value: unknown): SavedZone[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((zone) => normalizeSavedZone(zone))
+      .filter((zone): zone is SavedZone => zone !== null);
+  }
+  if (value && typeof value === "object" && "data" in value) {
+    return normalizeZoneList((value as { data?: unknown }).data);
+  }
+  return [];
+}
+
+async function fetchAccountZones(ownerZoneId: number | string): Promise<SavedZone[]> {
+  const primary = await request<unknown[]>({ method: "GET", url: "/zones" });
+  const primaryZones = normalizeZoneList(primary.data);
+  if (primaryZones.length > 0) return primaryZones;
+  const alt = await request<unknown[]>({
+    method: "GET",
+    url: "/zones/",
+    params: { zone_id: ownerZoneId },
+  });
+  return normalizeZoneList(alt.data);
 }
 
 export function useZones(ownerZoneId: number | string | null) {
@@ -45,9 +144,8 @@ export function useZones(ownerZoneId: number | string | null) {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchZonesByZoneId(ownerZoneId);
-      const allZones = Array.isArray(data) ? (data as SavedZone[]) : [];
-      setZones(allZones.filter((zone) => belongsToZone(zone, ownerZoneId)));
+      const allZones = await fetchAccountZones(ownerZoneId);
+      setZones(allZones);
     } catch {
       setError("Could not load saved zones.");
     } finally {
@@ -60,9 +158,16 @@ export function useZones(ownerZoneId: number | string | null) {
       if (ownerZoneId == null || ownerZoneId === "") {
         throw new Error("Missing owner zone id");
       }
-      const saved = await createZone({ ...payload, zone_id: String(ownerZoneId) });
+      const createResult = await request<SavedZone>({
+        method: "POST",
+        url: "/zones",
+        data: { ...payload, zone_id: String(ownerZoneId) },
+      });
+      if (!createResult.data || createResult.error) {
+        throw new Error(createResult.error ?? "Zone save failed");
+      }
       await refresh();
-      return saved;
+      return createResult.data;
     },
     [ownerZoneId, refresh],
   );
@@ -73,11 +178,7 @@ export function useZones(ownerZoneId: number | string | null) {
         throw new Error("Missing owner zone id");
       }
 
-      const ownerZonesRaw = await fetchZonesByZoneId(ownerZoneId);
-      const ownerZones = Array.isArray(ownerZonesRaw)
-        ? (ownerZonesRaw as SavedZone[])
-            .filter((zone) => belongsToZone(zone, ownerZoneId))
-        : [];
+      const ownerZones = await fetchAccountZones(ownerZoneId);
 
       const incomingCells = asCellList(payload.h3_cells);
       const incomingSet = new Set(incomingCells);
@@ -103,9 +204,13 @@ export function useZones(ownerZoneId: number | string | null) {
         updates.map(({ zone, nextCells }) => {
           const z = zone as Record<string, unknown>;
           const { id, ...rest } = z;
-          return updateZone(getZoneId(zone), {
-            ...rest,
-            h3_cells: nextCells,
+          return request<SavedZone>({
+            method: "PATCH",
+            url: `/zones/${getZoneId(zone)}`,
+            data: {
+              ...rest,
+              h3_cells: nextCells,
+            },
           });
         }),
       );
@@ -119,22 +224,17 @@ export function useZones(ownerZoneId: number | string | null) {
         zone_id: String(ownerZoneId),
         h3_cells: filteredNewCells,
       };
-      const geoFencePolygon = payload.geo_fence_polygon as
-        | { type?: unknown; coordinates?: unknown }
-        | undefined;
-      const hasPolygonPayload =
-        !!geoFencePolygon &&
-        (geoFencePolygon.type === "Polygon" ||
-          geoFencePolygon.type === "MultiPolygon") &&
-        Array.isArray(geoFencePolygon.coordinates) &&
-        geoFencePolygon.coordinates.length > 0;
-      const hasGeoFencePayload =
-        Array.isArray(payload.geo_fence) && payload.geo_fence.length > 0;
-
-      const saved = await createZone(toSave);
+      const createResult = await request<SavedZone>({
+        method: "POST",
+        url: "/zones",
+        data: toSave,
+      });
+      if (!createResult.data || createResult.error) {
+        throw new Error(createResult.error ?? "Zone save failed");
+      }
       await refresh();
       return {
-        saved,
+        saved: createResult.data,
         filteredNewCells,
         removedFromNewCount: dedupedIncoming.length - filteredNewCells.length,
         updatedPreviousZonesCount: updates.length,

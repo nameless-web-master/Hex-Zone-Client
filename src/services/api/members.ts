@@ -3,6 +3,7 @@ import { request } from "./client";
 export type Member = {
   id: string;
   name: string;
+  email?: string;
   first_name?: string;
   last_name?: string;
   address?: string;
@@ -41,6 +42,7 @@ function normalizeMember(raw: unknown): Member | null {
   return {
     id: String(id),
     name,
+    email: typeof row.email === "string" ? row.email : undefined,
     first_name: typeof row.first_name === "string" ? row.first_name : undefined,
     last_name: typeof row.last_name === "string" ? row.last_name : undefined,
     address: typeof row.address === "string" ? row.address : undefined,

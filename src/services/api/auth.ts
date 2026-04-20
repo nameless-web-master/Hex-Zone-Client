@@ -1,17 +1,33 @@
 import { clearStoredToken, persistToken, request } from "./client";
 
-export type AccountType = "PRIVATE" | "EXCLUSIVE";
+export type AccountType =
+  | "PRIVATE"
+  | "PRIVATE_PLUS"
+  | "EXCLUSIVE"
+  | "ENHANCED"
+  | "ENHANCED_PLUS";
+export type RegistrationType = "ADMINISTRATOR" | "USER";
+export type UserRole = "administrator" | "user";
 
 export type AuthUser = {
   id: string;
   name: string;
   accountType: AccountType;
+  registrationType?: RegistrationType;
+  accountOwnerId?: number;
+  role?: UserRole;
   email?: string;
   zoneId?: string;
   first_name?: string;
   last_name?: string;
   zone_id?: string | number;
   account_type?: string;
+  registration_type?: string;
+  account_owner_id?: number;
+  address?: string;
+  phone?: string | null;
+  mapCenter?: { latitude: number; longitude: number } | null;
+  map_center?: { latitude: number; longitude: number } | null;
 };
 
 export type OwnerListItem = {
@@ -32,6 +48,8 @@ export type RegisterPayload = {
   email: string;
   password: string;
   accountType: AccountType;
+  registrationType: RegistrationType;
+  accountOwnerId?: number;
   zoneId?: string;
   phone?: string;
   address?: string;
@@ -53,11 +71,30 @@ type LegacyRegisterPayload = {
   password: string;
   first_name: string;
   last_name: string;
-  account_type: "private" | "exclusive";
+  account_type: string;
   zone_id?: string;
+  role?: UserRole;
+  account_owner_id?: number;
   phone?: string;
   address?: string;
 };
+
+function toLegacyAccountType(accountType: AccountType): string {
+  return accountType.toLowerCase();
+}
+
+function parseAccountType(value?: string): AccountType {
+  const normalized = String(value ?? "").toUpperCase();
+  if (normalized === "PRIVATE_PLUS") return "PRIVATE_PLUS";
+  if (normalized === "EXCLUSIVE") return "EXCLUSIVE";
+  if (normalized === "ENHANCED") return "ENHANCED";
+  if (normalized === "ENHANCED_PLUS") return "ENHANCED_PLUS";
+  return "PRIVATE";
+}
+
+function parseRegistrationType(value?: string): RegistrationType {
+  return String(value ?? "").toUpperCase() === "USER" ? "USER" : "ADMINISTRATOR";
+}
 
 function mapLegacyRegisterPayload(payload: RegisterPayload): LegacyRegisterPayload {
   const [first, ...rest] = payload.name.trim().split(/\s+/);
@@ -67,8 +104,10 @@ function mapLegacyRegisterPayload(payload: RegisterPayload): LegacyRegisterPaylo
     password: payload.password,
     first_name: first || payload.name,
     last_name: last,
-    account_type: payload.accountType.toLowerCase() as "private" | "exclusive",
+    account_type: toLegacyAccountType(payload.accountType),
     zone_id: payload.zoneId,
+    role: payload.registrationType === "USER" ? "user" : "administrator",
+    account_owner_id: payload.accountOwnerId,
     phone: payload.phone,
     address: payload.address,
   };
@@ -88,7 +127,8 @@ function normalizeLoginData(
       ({
         id: "",
         name: "",
-        accountType: "PRIVATE",
+        accountType: parseAccountType(),
+        registrationType: parseRegistrationType(),
       } as AuthUser),
   };
 }

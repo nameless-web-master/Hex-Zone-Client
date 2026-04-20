@@ -1,18 +1,19 @@
-import axios from 'axios';
+import axios from "axios";
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || 'https://hex-zone-server.onrender.com';
+const baseURL =
+  import.meta.env.VITE_API_BASE_URL || "https://hex-zone-server.onrender.com";
 
 const api = axios.create({
   baseURL,
   headers: {
-    'Content-Type': 'application/json'
-  }
+    "Content-Type": "application/json",
+  },
 });
 
 api.interceptors.request.use((config) => {
   const token =
-    localStorage.getItem('zoneweaver_token') ||
-    sessionStorage.getItem('zoneweaver_token');
+    localStorage.getItem("zoneweaver_token") ||
+    sessionStorage.getItem("zoneweaver_token");
   if (token && config.headers) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -29,18 +30,18 @@ export interface RegisterPayload {
   password: string;
   first_name: string;
   last_name: string;
-  account_type: 'private' | 'exclusive';
+  account_type: "private" | "exclusive";
   phone?: string;
   zone_id?: string;
   address?: string;
 }
 
 export async function login(payload: LoginPayload) {
-  return api.post('/owners/login', payload).then((res) => res.data);
+  return api.post("/owners/login", payload).then((res) => res.data);
 }
 
 export async function register(payload: RegisterPayload) {
-  return api.post('/owners/register', payload).then((res) => res.data);
+  return api.post("/owners/register", payload).then((res) => res.data);
 }
 
 export interface GenerateQrTokenPayload {
@@ -53,8 +54,12 @@ export interface GenerateQrTokenResponse {
   expires_at?: string;
 }
 
-export async function generateQrRegistrationToken(payload: GenerateQrTokenPayload) {
-  return api.post<GenerateQrTokenResponse>('/utils/qr/generate', payload).then((res) => res.data);
+export async function generateQrRegistrationToken(
+  payload: GenerateQrTokenPayload,
+) {
+  return api
+    .post<GenerateQrTokenResponse>("/utils/qr/generate", payload)
+    .then((res) => res.data);
 }
 
 export interface QrJoinPayload {
@@ -68,11 +73,11 @@ export interface QrJoinPayload {
 }
 
 export async function joinWithQrToken(payload: QrJoinPayload) {
-  return api.post('/utils/qr/join', payload).then((res) => res.data);
+  return api.post("/utils/qr/join", payload).then((res) => res.data);
 }
 
 export async function fetchMe() {
-  return api.get('/owners/me').then((res) => res.data);
+  return api.get("/owners/me").then((res) => res.data);
 }
 
 /** PATCH /owners/{owner_id} — partial owner update (e.g. active). */
@@ -82,7 +87,10 @@ export interface OwnerUpdatePayload {
   active?: boolean | null;
 }
 
-export async function updateOwner(ownerId: number | string, payload: OwnerUpdatePayload) {
+export async function updateOwner(
+  ownerId: number | string,
+  payload: OwnerUpdatePayload,
+) {
   return api.patch(`/owners/${ownerId}`, payload).then((res) => res.data);
 }
 
@@ -97,7 +105,9 @@ export interface OwnerListItem {
 }
 
 export async function fetchOwners(params?: { skip?: number; limit?: number }) {
-  return api.get<OwnerListItem[]>('/owners/', { params }).then((res) => res.data);
+  return api
+    .get<OwnerListItem[]>("/owners/", { params })
+    .then((res) => res.data);
 }
 
 /** POST /devices/ — create device (full payload). */
@@ -154,19 +164,26 @@ export type CachedDeviceSettings = UpdateDevicePayload & {
 };
 
 export async function fetchDevices() {
-  return api.get<DeviceResponse[]>('/devices/').then((res) => res.data);
+  return api.get<DeviceResponse[]>("/devices/").then((res) => res.data);
 }
 
 export async function fetchDevice(deviceId: number | string) {
-  return api.get<DeviceResponse>(`/devices/${deviceId}`).then((res) => res.data);
+  return api
+    .get<DeviceResponse>(`/devices/${deviceId}`)
+    .then((res) => res.data);
 }
 
 export async function createDevice(payload: CreateDevicePayload) {
-  return api.post<DeviceResponse>('/devices/', payload).then((res) => res.data);
+  return api.post<DeviceResponse>("/devices/", payload).then((res) => res.data);
 }
 
-export async function updateDevice(deviceId: number | string, payload: UpdateDevicePayload) {
-  return api.patch<DeviceResponse>(`/devices/${deviceId}`, payload).then((res) => res.data);
+export async function updateDevice(
+  deviceId: number | string,
+  payload: UpdateDevicePayload,
+) {
+  return api
+    .patch<DeviceResponse>(`/devices/${deviceId}`, payload)
+    .then((res) => res.data);
 }
 
 export async function sendDeviceHeartbeat(deviceId: number | string) {
@@ -174,26 +191,37 @@ export async function sendDeviceHeartbeat(deviceId: number | string) {
 }
 
 export async function fetchZones() {
-  return api.get('/zones/').then((res) => res.data);
+  return api.get("/zones/").then((res) => res.data);
 }
 
 export async function fetchZonesByZoneId(zoneId: number | string) {
-  return api.get('/zones/', { params: { zone_id: zoneId } }).then((res) => res.data);
+  return api
+    .get("/zones/", { params: { zone_id: zoneId } })
+    .then((res) => res.data);
 }
 
 export async function createZone(payload: any) {
-  return api.post('/zones', payload).then((res) => res.data);
+  return api.post("/zones", payload).then((res) => res.data);
 }
 
 export async function updateZone(id: number | string, payload: any) {
   return api.patch(`/zones/${id}`, payload).then((res) => res.data);
 }
 
-export async function convertH3(latitude: number, longitude: number, resolution = 13) {
-  return api.post('/utils/h3/convert', { latitude, longitude, resolution }).then((res) => res.data);
+export async function convertH3(
+  latitude: number,
+  longitude: number,
+  resolution = 13,
+) {
+  return api
+    .post("/utils/h3/convert", { latitude, longitude, resolution })
+    .then((res) => res.data);
 }
 
-export async function updateDeviceLocation(id: number | string, payload: { latitude: number; longitude: number; address?: string }) {
+export async function updateDeviceLocation(
+  id: number | string,
+  payload: { latitude: number; longitude: number; address?: string },
+) {
   return api.post(`/devices/${id}/location`, payload).then((res) => res.data);
 }
 
