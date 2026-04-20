@@ -18,6 +18,7 @@ import {
   logout as authLogout,
   register as authRegister,
   type AuthUser,
+  type AccountType,
   type RegisterPayload,
 } from "../../services/api";
 
@@ -26,8 +27,10 @@ type LegacyRegisterPayload = {
   password: string;
   first_name: string;
   last_name: string;
-  account_type: "private" | "exclusive";
+  account_type: string;
   zone_id?: string;
+  role?: "administrator" | "user";
+  account_owner_id?: number;
   phone?: string;
   address?: string;
 };
@@ -48,6 +51,8 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const DEVICE_HID_KEY = "zoneweaver_device_hid";
+const EXCLUSIVE_DEVICE_LIMIT_ERROR =
+  "Exclusive accounts can only sign in from their registered device.";
 
 function randomHidSuffix(len = 8): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -70,6 +75,9 @@ async function upsertCurrentDevice(user: AuthUser | null) {
   if (!user) return;
   const hid = getOrCreateDeviceHid();
   const displayName = user.name?.trim() || user.email?.trim() || "Web Device";
+  const isExclusiveAccount =
+    user.accountType === "EXCLUSIVE" || user.account_type === "exclusive";
+  const currentUserId = String(user.id ?? user.accountOwnerId ?? "").trim();
   const payload = {
     hid,
     name: `${displayName} (Web)`,
@@ -90,6 +98,16 @@ async function upsertCurrentDevice(user: AuthUser | null) {
     await sendDeviceHeartbeat(existing.id);
     return;
   }
+
+  if (isExclusiveAccount && currentUserId) {
+    const ownerHasDevice = list.some(
+      (d) => String((d as { owner_id?: unknown }).owner_id ?? "") === currentUserId,
+    );
+    if (ownerHasDevice) {
+      throw new Error(EXCLUSIVE_DEVICE_LIMIT_ERROR);
+    }
+  }
+
   const created = await createDevice(payload);
   if (created.data?.id != null) {
     await request({
@@ -133,16 +151,52 @@ function isExpired(token: string): boolean {
 }
 
 function mapLegacyRegister(payload: LegacyRegisterPayload): RegisterPayload {
+  const normalizedType = String(payload.account_type).toUpperCase();
+  const accountType: AccountType =
+    normalizedType === "PRIVATE_PLUS" || normalizedType === "PRIVATE+"
+      ? "PRIVATE_PLUS"
+      : normalizedType === "EXCLUSIVE"
+        ? "EXCLUSIVE"
+        : normalizedType === "ENHANCED"
+          ? "ENHANCED"
+          : normalizedType === "ENHANCED_PLUS" || normalizedType === "ENHANCED+"
+            ? "ENHANCED_PLUS"
+            : "PRIVATE";
   return {
     name: `${payload.first_name} ${payload.last_name}`.trim(),
     email: payload.email,
     password: payload.password,
-    accountType:
-      payload.account_type === "exclusive" ? "EXCLUSIVE" : "PRIVATE",
+    accountType,
+    registrationType:
+      String(payload.role ?? "").toLowerCase() === "user"
+        ? "USER"
+        : "ADMINISTRATOR",
+    accountOwnerId: payload.account_owner_id,
     zoneId: payload.zone_id,
     phone: payload.phone,
     address: payload.address,
   };
+}
+
+function normalizeMapCenter(
+  value:
+    | { latitude?: unknown; longitude?: unknown }
+    | null
+    | undefined,
+): { latitude: number; longitude: number } | null {
+  if (!value || typeof value !== "object") return null;
+  const rawLat = Number(value.latitude);
+  const rawLng = Number(value.longitude);
+  if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng)) return null;
+
+  if (Math.abs(rawLat) <= 90 && Math.abs(rawLng) <= 180) {
+    return { latitude: rawLat, longitude: rawLng };
+  }
+  // Some backends accidentally return [lng, lat] in named keys.
+  if (Math.abs(rawLng) <= 90 && Math.abs(rawLat) <= 180) {
+    return { latitude: rawLng, longitude: rawLat };
+  }
+  return null;
 }
 
 function normalizeUser(raw: AuthUser | null): AuthUser | null {
@@ -152,14 +206,46 @@ function normalizeUser(raw: AuthUser | null): AuthUser | null {
   const fullName = raw.name || `${first} ${last}`.trim() || raw.email || "User";
   const zoneId =
     raw.zoneId ?? (raw.zone_id != null ? String(raw.zone_id) : undefined);
+  const mapCenter = normalizeMapCenter(raw.mapCenter ?? raw.map_center ?? null);
+  const accountTypeRaw =
+    raw.accountType ?? String(raw.account_type ?? "").toUpperCase();
+  const normalizedAccountType: AccountType =
+    accountTypeRaw === "PRIVATE_PLUS"
+      ? "PRIVATE_PLUS"
+      : accountTypeRaw === "EXCLUSIVE"
+        ? "EXCLUSIVE"
+        : accountTypeRaw === "ENHANCED"
+          ? "ENHANCED"
+          : accountTypeRaw === "ENHANCED_PLUS"
+            ? "ENHANCED_PLUS"
+            : "PRIVATE";
+  const role =
+    raw.role ??
+    (String(raw.registrationType ?? raw.registration_type ?? "").toUpperCase() ===
+    "USER"
+      ? "user"
+      : "administrator");
+  const registrationType =
+    String(raw.registrationType ?? raw.registration_type ?? "").toUpperCase() ===
+    "USER"
+      ? "USER"
+      : "ADMINISTRATOR";
+  const accountOwnerId =
+    raw.accountOwnerId ??
+    raw.account_owner_id ??
+    (raw.id != null && Number.isFinite(Number(raw.id)) ? Number(raw.id) : undefined);
   return {
     ...raw,
     name: fullName,
-    accountType:
-      raw.accountType ||
-      (String(raw.account_type).toUpperCase() === "EXCLUSIVE"
-        ? "EXCLUSIVE"
-        : "PRIVATE"),
+    accountType: normalizedAccountType,
+    account_type: raw.account_type ?? normalizedAccountType.toLowerCase(),
+    registrationType,
+    registration_type: raw.registration_type ?? registrationType.toLowerCase(),
+    role,
+    accountOwnerId,
+    account_owner_id: accountOwnerId,
+    mapCenter,
+    map_center: mapCenter,
     zoneId,
     zone_id: raw.zone_id ?? zoneId,
   };
@@ -228,8 +314,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!token || !user) return;
-    void upsertCurrentDevice(user).catch(() => {
-      // Device sync should never block auth UX.
+    void upsertCurrentDevice(user).catch((err: unknown) => {
+      if (
+        err instanceof Error &&
+        err.message === EXCLUSIVE_DEVICE_LIMIT_ERROR
+      ) {
+        void performLogout(false);
+        return;
+      }
+      // Device sync should never block auth UX for non-policy failures.
     });
   }, [token, user]);
 
@@ -258,15 +351,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!result.data) {
       throw new Error(result.error ?? "Login failed");
     }
-    setToken(result.data.token);
     if (result.data.user?.id) {
       const normalized = normalizeUser(result.data.user);
+      await upsertCurrentDevice(normalized);
       setUser(normalized);
     } else {
       const me = await fetchCurrentUser();
       if (!me.data) throw new Error(me.error ?? "Could not load profile");
       const normalized = normalizeUser(me.data);
+      await upsertCurrentDevice(normalized);
       setUser(normalized);
+    }
+    setToken(result.data.token);
+  };
+
+  const safeLogin = async (
+    email: string,
+    password: string,
+    options?: { rememberMe?: boolean },
+  ) => {
+    try {
+      await login(email, password, options);
+    } catch (err) {
+      await performLogout(false);
+      throw err;
     }
   };
 
@@ -284,7 +392,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const value = useMemo(
-    () => ({ user, token, loading, refreshUser, login, register, logout }),
+    () => ({
+      user,
+      token,
+      loading,
+      refreshUser,
+      login: safeLogin,
+      register,
+      logout,
+    }),
     [user, token, loading],
   );
 
