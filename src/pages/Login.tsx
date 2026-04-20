@@ -34,8 +34,12 @@ export default function Login() {
     try {
       await login(email, password, { rememberMe });
       navigate("/dashboard");
-    } catch {
-      setError("Login failed. Check your credentials and try again.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Login failed. Check your credentials and try again.",
+      );
     } finally {
       setLoading(false);
     }

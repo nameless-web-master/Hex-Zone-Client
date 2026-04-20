@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as turf from "@turf/turf";
+import { cellToParent, getResolution, isValidCell } from "h3-js";
 import { Copy, Download, MapPin, Ruler, Trash2, Upload } from "lucide-react";
 import HexMapperMap, {
   h3CellsAtPoint,
@@ -36,6 +37,7 @@ import {
   parseWktToPolygons,
 } from "../lib/wktKml";
 import { cornersFromH3Cell, cornersFromPolygonShape } from "../lib/mapBounds";
+import { searchPhotonAddresses } from "../lib/addressSearch";
 
 const accent = "#00E5D1";
 const panel = "bg-[#151a20]";
@@ -298,6 +300,14 @@ function savedZoneRecordId(zone: SavedZone): string {
   return String(zone.id);
 }
 
+type ZoneEntry = {
+  zone: SavedZone;
+  key: string;
+  ownerId: string | null;
+  creatorId: string | null;
+  editable: boolean;
+};
+
 function polygonKey(p: GeoPolygonShape): string {
   return JSON.stringify([p.outer, p.holes]);
 }
@@ -318,6 +328,161 @@ function geoPolygonAreaKm2(p: GeoPolygonShape): number {
   } catch {
     return 0;
   }
+}
+
+function hasCrossResolutionOverlap(cells: string[]): boolean {
+  const unique = new Set(
+    cells.filter((cell) => typeof cell === "string" && isValidCell(cell)),
+  );
+
+  for (const cell of unique) {
+    const resolution = getResolution(cell);
+    for (let r = resolution - 1; r >= 0; r -= 1) {
+      const parent = cellToParent(cell, r);
+      if (unique.has(parent)) return true;
+    }
+  }
+  return false;
+}
+
+function wouldOverlapAcrossResolutions(
+  nextCell: string,
+  existingCells: string[],
+): boolean {
+  if (!isValidCell(nextCell)) return false;
+  const EPS = 1e-12;
+  const nearlyEqual = (a: number, b: number) => Math.abs(a - b) <= EPS;
+  const pointsEqual = (a: [number, number], b: [number, number]): boolean =>
+    nearlyEqual(a[0], b[0]) && nearlyEqual(a[1], b[1]);
+  const cross = (
+    a: [number, number],
+    b: [number, number],
+    c: [number, number],
+  ): number => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const isPointOnSegment = (
+    p: [number, number],
+    a: [number, number],
+    b: [number, number],
+  ): boolean => {
+    if (Math.abs(cross(a, b, p)) > EPS) return false;
+    const minX = Math.min(a[0], b[0]) - EPS;
+    const maxX = Math.max(a[0], b[0]) + EPS;
+    const minY = Math.min(a[1], b[1]) - EPS;
+    const maxY = Math.max(a[1], b[1]) + EPS;
+    return p[0] >= minX && p[0] <= maxX && p[1] >= minY && p[1] <= maxY;
+  };
+  const isPointStrictlyInsidePolygon = (
+    point: [number, number],
+    ring: [number, number][],
+  ): boolean => {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[i];
+      const b = ring[j];
+      if (isPointOnSegment(point, a, b)) return false;
+      const intersects =
+        a[1] > point[1] !== b[1] > point[1] &&
+        point[0] <
+          ((b[0] - a[0]) * (point[1] - a[1])) /
+            (b[1] - a[1] || Number.EPSILON) +
+            a[0];
+      if (intersects) inside = !inside;
+    }
+    return inside;
+  };
+  const segmentsProperlyIntersect = (
+    a1: [number, number],
+    a2: [number, number],
+    b1: [number, number],
+    b2: [number, number],
+  ): boolean => {
+    if (
+      pointsEqual(a1, b1) ||
+      pointsEqual(a1, b2) ||
+      pointsEqual(a2, b1) ||
+      pointsEqual(a2, b2)
+    ) {
+      return false;
+    }
+    const d1 = cross(a1, a2, b1);
+    const d2 = cross(a1, a2, b2);
+    const d3 = cross(b1, b2, a1);
+    const d4 = cross(b1, b2, a2);
+    return d1 * d2 < -EPS && d3 * d4 < -EPS;
+  };
+  const polygonsHaveAreaOverlap = (
+    a: [number, number][],
+    b: [number, number][],
+  ): boolean => {
+    const aOpen = a.slice(0, -1);
+    const bOpen = b.slice(0, -1);
+    for (const p of aOpen) {
+      if (isPointStrictlyInsidePolygon(p, bOpen)) return true;
+    }
+    for (const p of bOpen) {
+      if (isPointStrictlyInsidePolygon(p, aOpen)) return true;
+    }
+    for (let i = 0; i < aOpen.length; i += 1) {
+      const a1 = aOpen[i];
+      const a2 = aOpen[(i + 1) % aOpen.length];
+      for (let j = 0; j < bOpen.length; j += 1) {
+        const b1 = bOpen[j];
+        const b2 = bOpen[(j + 1) % bOpen.length];
+        if (segmentsProperlyIntersect(a1, a2, b1, b2)) return true;
+      }
+    }
+    return false;
+  };
+  const toClosedLngLatRing = (cell: string): [number, number][] | null => {
+    try {
+      const ring = h3ToPolygon(cell).map(
+        ([lng, lat]) => [lng, lat] as [number, number],
+      );
+      if (ring.length < 3) return null;
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
+      return ring;
+    } catch {
+      return null;
+    }
+  };
+
+  const nextRing = toClosedLngLatRing(nextCell);
+  const nextResolution = getResolution(nextCell);
+  for (const existing of existingCells) {
+    if (!isValidCell(existing) || existing === nextCell) continue;
+    const existingResolution = getResolution(existing);
+    if (existingResolution === nextResolution) continue;
+
+    if (existingResolution < nextResolution) {
+      if (cellToParent(nextCell, existingResolution) === existing) return true;
+    } else if (cellToParent(existing, nextResolution) === nextCell) {
+      return true;
+    }
+
+    // Defensive geometry check: reject any non-zero area overlap across
+    // resolutions, even when hierarchy IDs are inconsistent.
+    if (!nextRing) continue;
+    const existingRing = toClosedLngLatRing(existing);
+    if (!existingRing) continue;
+    if (polygonsHaveAreaOverlap(nextRing, existingRing)) return true;
+  }
+  return false;
+}
+
+function normalizeMapCenterForDashboard(
+  center: { latitude?: unknown; longitude?: unknown } | null | undefined,
+): [number, number] | null {
+  if (!center || typeof center !== "object") return null;
+  const lat = Number(center.latitude);
+  const lng = Number(center.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return [lat, lng];
+  // Defensive swap for accidentally reversed backend values.
+  if (Math.abs(lng) <= 90 && Math.abs(lat) <= 180) return [lng, lat];
+  return null;
 }
 
 export default function Dashboard() {
@@ -372,9 +537,11 @@ export default function Dashboard() {
 
   const [pasteText, setPasteText] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
-  const [activeSavedZoneId, setActiveSavedZoneId] = useState<
-    number | string | null
-  >(null);
+  const [activeSavedZoneKey, setActiveSavedZoneKey] = useState<string | null>(
+    null,
+  );
+  const [activeSavedZoneEditable, setActiveSavedZoneEditable] =
+    useState<boolean>(false);
   const [removedCellIds, setRemovedCellIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -387,6 +554,31 @@ export default function Dashboard() {
     error: zonesError,
     saveZoneWithRebalance,
   } = useZones(userZoneId);
+  const currentUserId = useMemo(() => {
+    const raw = user?.id;
+    if (raw == null) return "";
+    return String(raw);
+  }, [user?.id]);
+  const zoneEntries = useMemo<ZoneEntry[]>(
+    () =>
+      zones.map((zone, idx) => {
+        const ownerId =
+          zone.owner_id != null ? String(zone.owner_id) : null;
+        const creatorId =
+          zone.creator_id != null ? String(zone.creator_id) : null;
+        const editable =
+          (creatorId != null && creatorId === currentUserId) ||
+          (creatorId == null && ownerId != null && ownerId === currentUserId);
+        return {
+          zone,
+          key: `${savedZoneRecordId(zone)}:${ownerId ?? "none"}:${idx}`,
+          ownerId,
+          creatorId,
+          editable,
+        };
+      }),
+    [zones, currentUserId],
+  );
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -401,22 +593,54 @@ export default function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (zones.length === 0) return;
-    const chosen =
-      (activeSavedZoneId != null &&
-        zones.find(
-          (z) => savedZoneRecordId(z) === String(activeSavedZoneId),
-        )) ||
-      zones.find((z) => zoneToPolygons(z).length > 0) ||
-      zones[0];
-    if (!chosen) return;
-    setActiveSavedZoneId(savedZoneRecordId(chosen));
-    setSelectedCells(
-      Array.isArray(chosen.h3_cells) ? [...chosen.h3_cells] : [],
+    const normalized = normalizeMapCenterForDashboard(
+      user?.mapCenter ?? user?.map_center,
     );
+    if (!normalized) return;
+    setMapCenter(normalized);
+  }, [user?.mapCenter, user?.map_center]);
+
+  useEffect(() => {
+    const address = user?.address?.trim();
+    if (!address || address.length < 2) return;
+    const ac = new AbortController();
+    searchPhotonAddresses(address, ac.signal)
+      .then((features) => {
+        const first = features[0];
+        if (!first) return;
+        const [lng, lat] = first.geometry.coordinates;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        setMapCenter([lat, lng]);
+      })
+      .catch((err: Error) => {
+        if (err.name === "AbortError") return;
+        // Keep prior map center when address lookup fails.
+      });
+    return () => ac.abort();
+  }, [user?.id, user?.address]);
+
+  useEffect(() => {
+    if (zoneEntries.length === 0) return;
+    const chosen =
+      (activeSavedZoneKey != null &&
+        zoneEntries.find((entry) => entry.key === activeSavedZoneKey)) ||
+      zoneEntries.find(
+        (entry) =>
+          Array.isArray(entry.zone.h3_cells) && entry.zone.h3_cells.length > 0,
+      ) ||
+      zoneEntries.find((entry) => zoneToPolygons(entry.zone).length > 0) ||
+      zoneEntries[0] ||
+      null;
+    if (!chosen) return;
+    setActiveSavedZoneKey(chosen.key);
+    setActiveSavedZoneEditable(chosen.editable);
+    setSelectedCells(
+      Array.isArray(chosen.zone.h3_cells) ? [...chosen.zone.h3_cells] : [],
+    );
+    setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
-    setPolygons(zoneToPolygons(chosen));
-  }, [zones, activeSavedZoneId]);
+    setPolygons(zoneToPolygons(chosen.zone));
+  }, [zoneEntries, activeSavedZoneKey]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -465,6 +689,20 @@ export default function Dashboard() {
 
   const h3FillOpacity = h3OpacityPct / 100;
   const polygonFillOpacity = polygonOpacityPct / 100;
+  const editableWorkingCells = useMemo(
+    () =>
+      activeSavedZoneEditable
+        ? selectedCells.filter((c) => !removedCellIds.has(c))
+        : [],
+    [activeSavedZoneEditable, selectedCells, removedCellIds],
+  );
+  const editableWorkingPolygons = useMemo(
+    () =>
+      activeSavedZoneEditable
+        ? polygons.filter((p) => !removedPolygonKeys.has(polygonKey(p)))
+        : [],
+    [activeSavedZoneEditable, polygons, removedPolygonKeys],
+  );
   const allWorkingCells = useMemo(() => {
     const set = new Set<string>();
     for (const zone of zones) {
@@ -530,8 +768,8 @@ export default function Dashboard() {
 
       if (mapperMode === "h3") {
         const pt = turf.point([lng, lat]);
-        let matchedExisting: string | null = null;
-        for (const id of allWorkingCells) {
+        let matchedEditable: string | null = null;
+        for (const id of editableWorkingCells) {
           try {
             const ring = h3ToPolygon(id);
             const coords = ring.map(([x, y]) => [x, y] as [number, number]);
@@ -542,25 +780,50 @@ export default function Dashboard() {
               coords.push(coords[0]);
             }
             if (turf.booleanPointInPolygon(pt, turf.polygon([coords]))) {
-              matchedExisting = id;
+              matchedEditable = id;
               break;
             }
           } catch {
             /* skip invalid ids */
           }
         }
-        if (matchedExisting) {
+        if (matchedEditable) {
           setRemovedCellIds((prev) => {
             const next = new Set(prev);
-            next.add(matchedExisting);
+            next.add(matchedEditable);
             return next;
           });
           setSelectedCells((current) =>
-            current.filter((c) => c !== matchedExisting),
+            current.filter((c) => c !== matchedEditable),
           );
           return;
         }
+        for (const id of allWorkingCells) {
+          if (editableWorkingCells.includes(id)) continue;
+          try {
+            const ring = h3ToPolygon(id);
+            const coords = ring.map(([x, y]) => [x, y] as [number, number]);
+            if (
+              coords[0][0] !== coords[coords.length - 1][0] ||
+              coords[0][1] !== coords[coords.length - 1][1]
+            ) {
+              coords.push(coords[0]);
+            }
+            if (turf.booleanPointInPolygon(pt, turf.polygon([coords]))) {
+              setSaveStatus("This cell is shared reference data and is read-only.");
+              return;
+            }
+          } catch {
+            /* skip invalid ids */
+          }
+        }
         const cell = getCellFromCoords(lat, lng, resolution);
+        if (wouldOverlapAcrossResolutions(cell, allWorkingCells)) {
+          setSaveStatus(
+            "Overlapping H3 cells across resolutions are not allowed. Pick a non-overlapping area.",
+          );
+          return;
+        }
         setRemovedCellIds((prev) => {
           if (!prev.has(cell)) return prev;
           const next = new Set(prev);
@@ -603,7 +866,7 @@ export default function Dashboard() {
 
       if (mapperMode === "polygon" && !drawingActive) {
         let matched: GeoPolygonShape | null = null;
-        for (const p of allWorkingPolygons) {
+        for (const p of editableWorkingPolygons) {
           if (pointInPolygon(lat, lng, p.outer)) {
             let inHole = false;
             for (const h of p.holes) {
@@ -626,6 +889,27 @@ export default function Dashboard() {
             return next;
           });
           setPolygons((ps) => ps.filter((p) => polygonKey(p) !== key));
+          return;
+        }
+        for (const p of allWorkingPolygons) {
+          if (editableWorkingPolygons.some((editablePoly) => editablePoly.id === p.id)) {
+            continue;
+          }
+          if (pointInPolygon(lat, lng, p.outer)) {
+            let inHole = false;
+            for (const h of p.holes) {
+              if (pointInPolygon(lat, lng, h)) {
+                inHole = true;
+                break;
+              }
+            }
+            if (!inHole) {
+              setSaveStatus(
+                "This polygon is shared reference data and is read-only.",
+              );
+              return;
+            }
+          }
         }
       }
     },
@@ -634,8 +918,10 @@ export default function Dashboard() {
       mapperMode,
       resolution,
       toggleCell,
+      editableWorkingCells,
       allWorkingCells,
       allWorkingPolygons,
+      editableWorkingPolygons,
       drawingActive,
       draftRing,
       holeParentId,
@@ -776,9 +1062,19 @@ export default function Dashboard() {
       setSaveStatus("Your account has no zone ID.");
       return;
     }
+    if (!activeSavedZoneEditable) {
+      setSaveStatus("Selected zone is read-only. Choose one of your own zones to edit.");
+      return;
+    }
     const canSave = allWorkingCells.length > 0 || allWorkingPolygons.length > 0;
     if (!canSave) {
       setSaveStatus("Select H3 cells or add polygons before saving.");
+      return;
+    }
+    if (hasCrossResolutionOverlap(allWorkingCells)) {
+      setSaveStatus(
+        "Overlapping H3 cells across resolutions are not allowed. Remove parent/child duplicates before saving.",
+      );
       return;
     }
     setSaveStatus("Saving…");
@@ -795,18 +1091,29 @@ export default function Dashboard() {
       setSaveStatus(
         `Zone saved. Removed ${result.removedFromNewCount} overlapping cell(s); updated ${result.updatedPreviousZonesCount} previous zone(s).`,
       );
-    } catch {
-      setSaveStatus("Save failed. Check your session and try again.");
+    } catch (err) {
+      console.error(err);
+      setSaveStatus(
+        err instanceof Error
+          ? err.message
+          : "Save failed. Check your session and try again.",
+      );
     }
   };
 
-  const loadSavedZone = useCallback((zone: SavedZone) => {
-    setActiveSavedZoneId(savedZoneRecordId(zone));
+  const loadSavedZone = useCallback((entry: ZoneEntry) => {
+    const zone = entry.zone;
+    setActiveSavedZoneKey(entry.key);
+    setActiveSavedZoneEditable(entry.editable);
     setSelectedCells(Array.isArray(zone.h3_cells) ? [...zone.h3_cells] : []);
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
     setPolygons(zoneToPolygons(zone));
-    setSaveStatus(`Loaded ${zone.name ?? `zone ${savedZoneId(zone)}`}.`);
+    setSaveStatus(
+      entry.editable
+        ? `Loaded ${zone.name ?? `zone ${savedZoneId(zone)}`}.`
+        : `Loaded ${zone.name ?? `zone ${savedZoneId(zone)}`} (read-only).`,
+    );
   }, []);
 
   const copyZoneId = async () => {
@@ -829,22 +1136,20 @@ export default function Dashboard() {
 
   const savedZoneCellLayers = useMemo<SavedZoneCellLayer[]>(
     () =>
-      zones
-        .map((zone) => {
-          const active =
-            activeSavedZoneId != null &&
-            savedZoneRecordId(zone) === String(activeSavedZoneId);
+      zoneEntries
+        .map((entry) => {
+          const active = activeSavedZoneKey != null && entry.key === activeSavedZoneKey;
           const cells = active
             ? selectedCells.filter((c) => !removedCellIds.has(c))
-            : Array.isArray(zone.h3_cells)
-              ? zone.h3_cells.filter(
+            : Array.isArray(entry.zone.h3_cells)
+              ? entry.zone.h3_cells.filter(
                   (v): v is string =>
                     typeof v === "string" && !removedCellIds.has(v),
                 )
               : [];
           if (cells.length === 0) return null;
           return {
-            key: `saved-${savedZoneRecordId(zone)}`,
+            key: `saved-${entry.key}`,
             cells,
             color: "#00E5D1",
             fillOpacity: active ? 0.42 : 0.26,
@@ -852,23 +1157,21 @@ export default function Dashboard() {
           } satisfies SavedZoneCellLayer;
         })
         .filter((v): v is SavedZoneCellLayer => v !== null),
-    [zones, activeSavedZoneId, selectedCells, removedCellIds],
+    [zoneEntries, activeSavedZoneKey, selectedCells, removedCellIds],
   );
 
   const savedZonePolygonLayers = useMemo<SavedZonePolygonLayer[]>(
     () =>
-      zones
-        .map((zone) => {
-          const active =
-            activeSavedZoneId != null &&
-            savedZoneRecordId(zone) === String(activeSavedZoneId);
-          const zonePolys = active ? polygons : zoneToPolygons(zone);
+      zoneEntries
+        .map((entry) => {
+          const active = activeSavedZoneKey != null && entry.key === activeSavedZoneKey;
+          const zonePolys = active ? polygons : zoneToPolygons(entry.zone);
           const filtered = zonePolys.filter(
             (p) => !removedPolygonKeys.has(polygonKey(p)),
           );
           if (filtered.length === 0) return null;
           return {
-            key: `poly-${savedZoneRecordId(zone)}`,
+            key: `poly-${entry.key}`,
             polygons: filtered,
             color: "#00E5D1",
             fillOpacity: active ? 0.28 : 0.14,
@@ -876,7 +1179,7 @@ export default function Dashboard() {
           } satisfies SavedZonePolygonLayer;
         })
         .filter((v): v is SavedZonePolygonLayer => v !== null),
-    [zones, activeSavedZoneId, polygons, removedPolygonKeys],
+    [zoneEntries, activeSavedZoneKey, polygons, removedPolygonKeys],
   );
 
   const focusH3Cell = useCallback((cellId: string) => {
@@ -1317,19 +1620,30 @@ export default function Dashboard() {
                     </p>
                   ) : (
                     <ul className="space-y-1">
-                      {zones.map((zone, idx) => {
+                      {zoneEntries.map((entry, idx) => {
+                        const zone = entry.zone;
                         const isActive =
-                          activeSavedZoneId != null &&
-                          String(activeSavedZoneId) === savedZoneRecordId(zone);
+                          activeSavedZoneKey != null &&
+                          activeSavedZoneKey === entry.key;
                         return (
-                          <li key={savedZoneRecordId(zone)}>
+                          <li key={entry.key}>
                             <button
                               type="button"
-                              onClick={() => loadSavedZone(zone)}
+                              onClick={() => {
+                                loadSavedZone(entry);
+                                const focusCell = Array.isArray(zone.h3_cells)
+                                  ? zone.h3_cells[0]
+                                  : undefined;
+                                if (focusCell) focusH3Cell(focusCell);
+                                const focusPoly = zoneToPolygons(zone)[0];
+                                if (!focusCell && focusPoly) focusPolygonShape(focusPoly);
+                              }}
                               className={`w-full rounded px-2 py-1.5 text-left text-[10px] leading-snug transition ${
                                 isActive
                                   ? "bg-[#00E5D1]/20 text-white"
-                                  : "text-[#00E5D1] hover:bg-[#00E5D1]/15 hover:text-white"
+                                  : entry.editable
+                                    ? "text-[#00E5D1] hover:bg-[#00E5D1]/15 hover:text-white"
+                                    : "text-slate-400 hover:bg-slate-700/20"
                               }`}
                             >
                               <div className="flex items-baseline gap-2 font-mono">
@@ -1339,6 +1653,11 @@ export default function Dashboard() {
                                 <span className="min-w-0 break-all">
                                   {zone.name || `Zone ${savedZoneId(zone)}`}
                                 </span>
+                                {!entry.editable && (
+                                  <span className="shrink-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                                    read-only
+                                  </span>
+                                )}
                               </div>
                             </button>
                           </li>

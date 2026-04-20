@@ -3,7 +3,6 @@ import {
   createDevice,
   fetchDevice,
   fetchDevices,
-  fetchOwners,
   sendDeviceHeartbeat,
   updateDevice,
   type CachedDeviceSettings,
@@ -11,6 +10,7 @@ import {
   type DeviceResponse,
   type UpdateDevicePayload,
 } from "../lib/api";
+import { getMembers } from "../services/api/members";
 import {
   appendLocalDevice,
   applyDeviceAssignments,
@@ -29,6 +29,7 @@ import { AlertTriangle, CircleDot, Plus, Smartphone, X } from "lucide-react";
 
 const ACCENT = "#00E5D1";
 const H3_RESOLUTION = 10;
+const WEB_DEVICE_HID_KEY = "zoneweaver_device_hid";
 const DM_ADDRESS_LABEL =
   "mb-1.5 block text-xs font-semibold uppercase tracking-[0.15em] text-slate-500";
 const DM_ADDRESS_INPUT =
@@ -119,24 +120,21 @@ function normalizeDeviceHidInput(input: string): string | null {
   return `DEV-${suffix}`;
 }
 
-function mapOwnersToRegisteredUsers(data: unknown): RegisteredUser[] {
+function mapMembersToRegisteredUsers(data: unknown): RegisteredUser[] {
   if (!Array.isArray(data)) return [];
   return data
-    .map((o) => {
-      const row = o as Record<string, unknown>;
+    .map((m) => {
+      const row = m as Record<string, unknown>;
       const id = row.id;
       if (id == null || id === "") return null;
-      const email = String(row.email ?? "");
       const first = String(row.first_name ?? "");
       const last = String(row.last_name ?? "");
-      const entry: RegisteredUser = {
-        id: String(id),
-        displayName: `${first} ${last}`.trim() || email,
-        email,
-      };
-      return entry;
+      const name = String(row.name ?? "");
+      const displayName = `${first} ${last}`.trim() || name || `User ${id}`;
+      const email = String(row.email ?? "");
+      return { id: String(id), displayName, email } satisfies RegisteredUser;
     })
-    .filter((u): u is RegisteredUser => u != null);
+    .filter((u): u is RegisteredUser => u !== null);
 }
 
 function ownerForDevice(
@@ -170,11 +168,15 @@ function defaultForm(device: Device): DeviceFormState {
   };
 }
 
-function remoteToForm(remote: DeviceResponse, fallback: Device): DeviceFormState {
+function remoteToForm(
+  remote: DeviceResponse,
+  fallback: Device,
+): DeviceFormState {
   return {
     name: remote.name ?? fallback.name ?? "",
     address: String(remote.address ?? fallback.address ?? ""),
-    propagate_enabled: remote.propagate_enabled ?? fallback.propagate_enabled ?? true,
+    propagate_enabled:
+      remote.propagate_enabled ?? fallback.propagate_enabled ?? true,
     propagate_radius_km: Number(
       remote.propagate_radius_km ?? fallback.propagate_radius_km ?? 2.5,
     ),
@@ -191,6 +193,12 @@ function remoteToForm(remote: DeviceResponse, fallback: Device): DeviceFormState
 
 export default function DeviceManager() {
   const { user } = useAuth();
+  const currentWebHid = useMemo(
+    () => String(localStorage.getItem(WEB_DEVICE_HID_KEY) ?? "").toUpperCase(),
+    [],
+  );
+  const isExclusiveAccount =
+    user?.accountType === "EXCLUSIVE" || user?.account_type === "exclusive";
   const [devices, setDevices] = useState<Device[]>([]);
   const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -228,30 +236,31 @@ export default function DeviceManager() {
     update_interval_seconds: 120,
   });
 
-  const loadRegisteredOwners =
-    useCallback(async (): Promise<RegisteredUser[]> => {
-      if (!user) {
-        setRegisteredUsers([]);
-        setUsersError(null);
-        return [];
-      }
-      setUsersLoading(true);
+  const loadRegisteredOwners = useCallback(async (): Promise<
+    RegisteredUser[]
+  > => {
+    if (!user) {
+      setRegisteredUsers([]);
       setUsersError(null);
-      try {
-        const data = await fetchOwners({ limit: 500 });
-        const list = mapOwnersToRegisteredUsers(data);
-        setRegisteredUsers(list);
-        return list;
-      } catch {
-        setRegisteredUsers([]);
-        setUsersError(
-          "Could not load registered users. Check your session and GET /owners/.",
-        );
-        return [];
-      } finally {
-        setUsersLoading(false);
-      }
-    }, [user]);
+      return [];
+    }
+    setUsersLoading(true);
+    setUsersError(null);
+    try {
+      const result = await getMembers();
+      const list = mapMembersToRegisteredUsers(result.data ?? []);
+      setRegisteredUsers(list);
+      return list;
+    } catch {
+      setRegisteredUsers([]);
+      setUsersError(
+        "Could not load registered users. Check your session and GET /members.",
+      );
+      return [];
+    } finally {
+      setUsersLoading(false);
+    }
+  }, [user]);
 
   useEffect(() => {
     void loadRegisteredOwners();
@@ -291,7 +300,9 @@ export default function DeviceManager() {
     setSettingsError(null);
     setSettingsLoading(true);
     const defaults = defaultForm(device);
-    const cached = getSettingsForHid(device.hid) as CachedDeviceSettings | undefined;
+    const cached = getSettingsForHid(device.hid) as
+      | CachedDeviceSettings
+      | undefined;
 
     if (isLocalOnlyDevice(device)) {
       setForm({
@@ -426,9 +437,7 @@ export default function DeviceManager() {
       const updated = await updateDevice(drawerDevice.id, payload);
       setSettingsForHid(drawerDevice.hid, payload);
       setDevices((prev) =>
-        prev.map((d) =>
-          d.id === drawerDevice.id ? { ...d, ...updated } : d,
-        ),
+        prev.map((d) => (d.id === drawerDevice.id ? { ...d, ...updated } : d)),
       );
       setDrawerDevice((d) =>
         d && d.id === drawerDevice.id ? { ...d, ...updated } : d,
@@ -529,7 +538,9 @@ export default function DeviceManager() {
     }
     const normalizedHid =
       normalizeDeviceHidInput(addForm.hid) ?? generateDeviceHid();
-    if (devices.some((d) => d.hid.toLowerCase() === normalizedHid.toLowerCase())) {
+    if (
+      devices.some((d) => d.hid.toLowerCase() === normalizedHid.toLowerCase())
+    ) {
       setAddError("This Device ID is already in use.");
       return;
     }
@@ -608,12 +619,31 @@ export default function DeviceManager() {
       };
     });
 
-    return [...withOwners].sort((a, b) => {
+    const role = String(user?.role ?? "").toLowerCase();
+    const currentUserId = String(user?.id ?? "");
+    const roleScoped =
+      (role === "user" || isExclusiveAccount) && currentUserId
+        ? withOwners.filter(
+            (device) =>
+              String(device.owner_id ?? "") === currentUserId ||
+              (!!currentWebHid &&
+                String(device.hid ?? "").toUpperCase() === currentWebHid),
+          )
+        : withOwners;
+
+    return [...roleScoped].sort((a, b) => {
       const dateA = new Date(a.last_seen || a.updated_at || 0).getTime();
       const dateB = new Date(b.last_seen || b.updated_at || 0).getTime();
       return dateB - dateA;
     });
-  }, [devices, registeredUsers]);
+  }, [
+    devices,
+    registeredUsers,
+    user?.id,
+    user?.role,
+    isExclusiveAccount,
+    currentWebHid,
+  ]);
 
   const ownerUsernameSlug = useMemo(() => {
     if (!user?.first_name && !user?.last_name) return "";
@@ -625,12 +655,9 @@ export default function DeviceManager() {
   const userRows = useMemo(() => {
     return sortedDevices.map((device) => {
       const personName =
-        device.user_display_name?.trim() ||
-        device.name?.trim() ||
-        device.hid;
+        device.user_display_name?.trim() || device.name?.trim() || device.hid;
       const username = slugUsername(personName) || `device.${device.id}`;
-      const email =
-        device.user_email?.trim() || `${username}@geozone.io`;
+      const email = device.user_email?.trim() || `${username}@geozone.io`;
       const ui = deriveUiStatus(device);
       const active = device.active;
       const highlight =
@@ -654,14 +681,18 @@ export default function DeviceManager() {
     : null;
 
   const accountLabel =
-    user?.account_type === "exclusive"
-      ? "Exclusive"
-      : user?.account_type === "private"
-        ? "Private"
-        : user?.account_type
-          ? user.account_type.charAt(0).toUpperCase() +
-            user.account_type.slice(1)
-          : "Private";
+    user?.accountType === "PRIVATE_PLUS" ||
+    user?.account_type === "private_plus"
+      ? "Private+"
+      : user?.accountType === "ENHANCED_PLUS" ||
+          user?.account_type === "enhanced_plus"
+        ? "Enhanced+"
+        : user?.accountType === "ENHANCED" || user?.account_type === "enhanced"
+          ? "Enhanced"
+          : user?.accountType === "EXCLUSIVE" ||
+              user?.account_type === "exclusive"
+            ? "Exclusive"
+            : "Private";
 
   const warningCopy =
     accountLabel === "Private"
@@ -744,8 +775,8 @@ export default function DeviceManager() {
                     No devices yet. Use{" "}
                     <span className="text-slate-300">Add device</span> to
                     register one, or ensure{" "}
-                    <code className="text-slate-400">GET /devices/</code> returns
-                    data from the server.
+                    <code className="text-slate-400">GET /devices/</code>{" "}
+                    returns data from the server.
                   </td>
                 </tr>
               ) : (
@@ -798,7 +829,7 @@ export default function DeviceManager() {
           </p>
         </div>
         <div className="min-w-full overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-800 text-sm text-slate-200">
+          <table className="min-w-full divide-slate-800 text-sm text-slate-200">
             <thead className="bg-slate-950/80 text-xs uppercase tracking-[0.2em] text-slate-500">
               <tr>
                 <th className="px-6 py-4 text-left font-medium">Username</th>
@@ -808,7 +839,7 @@ export default function DeviceManager() {
                 <th className="px-6 py-4 text-left font-medium">Zone</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="">
               {userRows.length === 0 ? (
                 <tr>
                   <td
@@ -925,8 +956,8 @@ export default function DeviceManager() {
                   !usersError &&
                   registeredUsers.length === 0 && (
                     <p className="mt-2 text-xs text-slate-500">
-                      Users come from <code className="text-slate-400">GET /owners/</code>{" "}
-                      (registered owner accounts).
+                      Users come from{" "}
+                      <code className="text-slate-400">GET /members</code>.
                     </p>
                   )}
               </div>

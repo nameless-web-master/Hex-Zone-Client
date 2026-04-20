@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ChevronRight, Eye, EyeOff, QrCode } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
+import type { AccountType, RegistrationType } from "../services/api";
 import AuthMapPanel from "../components/AuthMapPanel";
 import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
 import {
@@ -20,48 +21,36 @@ const labelClass =
 const inputClass = `${panelBg} w-full rounded-md border border-slate-700/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`;
 
 const accountOptions: {
-  value: "private" | "exclusive" | "private_plus" | "enhanced" | "enhanced_plus";
+  value: AccountType;
   title: string;
   lines: [string, string];
-  available: boolean;
 }[] = [
   {
-    value: "private",
+    value: "PRIVATE",
     title: "Private",
     lines: ["Many users, 1 device each", "Shared zone type"],
-    available: true,
   },
   {
-    value: "exclusive",
+    value: "EXCLUSIVE",
     title: "Exclusive",
     lines: ["1 user, 1 device", "Any zone type"],
-    available: true,
   },
   {
-    value: "private_plus",
+    value: "PRIVATE_PLUS",
     title: "Private+",
-    lines: ["Planned backend support", "Feature flagged for now"],
-    available: false,
+    lines: ["Admin and users", "Expanded account controls"],
   },
   {
-    value: "enhanced",
+    value: "ENHANCED",
     title: "Enhanced",
-    lines: ["Planned backend support", "Feature flagged for now"],
-    available: false,
+    lines: ["Advanced account", "Extended zone capabilities"],
   },
   {
-    value: "enhanced_plus",
+    value: "ENHANCED_PLUS",
     title: "Enhanced+",
-    lines: ["Planned backend support", "Feature flagged for now"],
-    available: false,
+    lines: ["Premium account", "Maximum controls"],
   },
 ];
-
-function isSelectableAccountType(
-  value: (typeof accountOptions)[number]["value"],
-): value is "private" | "exclusive" {
-  return value === "private" || value === "exclusive";
-}
 
 export default function CreateAccount() {
   const navigate = useNavigate();
@@ -72,9 +61,10 @@ export default function CreateAccount() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [accountType, setAccountType] = useState<"private" | "exclusive">(
-    "private",
-  );
+  const [accountType, setAccountType] = useState<AccountType>("PRIVATE");
+  const [registrationType, setRegistrationType] =
+    useState<RegistrationType>("ADMINISTRATOR");
+  const [accountOwnerId, setAccountOwnerId] = useState("");
   const [address, setAddress] = useState("350 Fifth Avenue, New York");
   /** Set when user picks a suggestion — map uses real [lat, lng] */
   const [addressCoords, setAddressCoords] = useState<[number, number] | null>(
@@ -106,7 +96,12 @@ export default function CreateAccount() {
         name: `${firstName} ${lastName}`.trim(),
         email,
         password,
-        accountType: accountType === "exclusive" ? "EXCLUSIVE" : "PRIVATE",
+        accountType,
+        registrationType,
+        accountOwnerId:
+          registrationType === "USER"
+            ? Number(accountOwnerId.trim()) || undefined
+            : undefined,
         address,
         phone: phone || undefined,
         zoneId: selectedZoneId,
@@ -231,26 +226,18 @@ export default function CreateAccount() {
                         key={option.value}
                         type="button"
                         onClick={() => {
-                          if (option.available && isSelectableAccountType(option.value)) {
-                            setAccountType(option.value);
-                          }
+                          setAccountType(option.value);
                         }}
-                        disabled={!option.available}
                         className={`rounded-md border px-4 py-4 text-left transition ${
                           active
                             ? `border-[#00E5D1] bg-[#00E5D1]/10 shadow-[0_0_24px_-8px_rgba(0,229,209,0.45)]`
                             : "border-slate-700/80 bg-[#151a20] hover:border-slate-600"
-                        } ${!option.available ? "cursor-not-allowed opacity-60" : ""}`}
+                        }`}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <p className="font-semibold text-white">
                             {option.title}
                           </p>
-                          {!option.available && (
-                            <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
-                              Planned
-                            </span>
-                          )}
                         </div>
                         <p className="mt-2 text-sm text-slate-400">
                           {option.lines[0]}
@@ -262,6 +249,51 @@ export default function CreateAccount() {
                     );
                   })}
                 </div>
+              </div>
+
+              <div className="rounded-md border border-slate-700/80 bg-[#151a20] p-4">
+                <p className={labelClass}>Registration type</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationType("ADMINISTRATOR")}
+                    className={`rounded-md border px-4 py-3 text-left transition ${
+                      registrationType === "ADMINISTRATOR"
+                        ? "border-[#00E5D1] bg-[#00E5D1]/10 text-white"
+                        : "border-slate-700/80 text-slate-300 hover:border-slate-600"
+                    }`}
+                  >
+                    Administrator
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationType("USER")}
+                    className={`rounded-md border px-4 py-3 text-left transition ${
+                      registrationType === "USER"
+                        ? "border-[#00E5D1] bg-[#00E5D1]/10 text-white"
+                        : "border-slate-700/80 text-slate-300 hover:border-slate-600"
+                    }`}
+                  >
+                    User
+                  </button>
+                </div>
+                {registrationType === "USER" && (
+                  <div className="mt-4">
+                    <label htmlFor="reg-owner-id" className={labelClass}>
+                      Account owner ID
+                    </label>
+                    <input
+                      id="reg-owner-id"
+                      type="number"
+                      min={1}
+                      required
+                      value={accountOwnerId}
+                      onChange={(e) => setAccountOwnerId(e.target.value)}
+                      placeholder="101"
+                      className={inputClass}
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="rounded-md border border-dashed border-slate-700/80 bg-[#151a20] p-4">

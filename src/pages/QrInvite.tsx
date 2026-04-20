@@ -25,14 +25,18 @@ export default function QrInvite() {
     setLoadingToken(true);
     setTokenError("");
     try {
-      const response = await generateQrRegistrationToken({ zone_id: userZoneId });
+      const response = await generateQrRegistrationToken({
+        zone_id: userZoneId,
+      });
       if (!response?.token) {
         throw new Error("No token returned");
       }
       setJoinToken(response.token);
     } catch {
       setJoinToken("");
-      setTokenError("Unable to generate QR invite token. Please try again.");
+      setTokenError(
+        "You can not create a QR invite token for this zone or account.",
+      );
     } finally {
       setLoadingToken(false);
     }
@@ -105,7 +109,9 @@ export default function QrInvite() {
           </p>
 
           {loadingToken && (
-            <p className="mt-6 text-sm text-slate-400">Generating invite token…</p>
+            <p className="mt-6 text-sm text-slate-400">
+              Generating invite token…
+            </p>
           )}
           {tokenError && !loadingToken && (
             <div className="mt-6 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">

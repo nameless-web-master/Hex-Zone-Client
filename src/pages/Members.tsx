@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getOwners, type OwnerListItem } from "../services/api/auth";
 import { getMembers, type Member } from "../services/api/members";
 import { useAppState } from "../state/app/AppStateContext";
 
@@ -12,20 +13,26 @@ function formatLastSeen(value?: string): string {
 export default function Members() {
   const { setMembers: setGlobalMembers } = useAppState();
   const [members, setMembers] = useState<Member[]>([]);
+  const [owners, setOwners] = useState<OwnerListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
-    getMembers()
-      .then((result) => {
+    Promise.all([getMembers(), getOwners({ skip: 0, limit: 500 })])
+      .then(([membersResult, ownersResult]) => {
         if (!mounted) return;
-        if (result.error) setError(result.error);
-        else {
-          const next = result.data ?? [];
-          setMembers(next);
-          setGlobalMembers(next);
+
+        if (membersResult.error || ownersResult.error) {
+          setError(membersResult.error ?? ownersResult.error ?? "Failed to load data.");
+          return;
         }
+
+        const nextMembers = membersResult.data ?? [];
+        const nextOwners = ownersResult.data ?? [];
+        setMembers(nextMembers);
+        setGlobalMembers(nextMembers);
+        setOwners(nextOwners);
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -62,6 +69,32 @@ export default function Members() {
             </p>
           </article>
         ))}
+      </div>
+
+      <div className="space-y-3">
+        <h2 className="text-xl font-semibold text-white">Owners (for private messages)</h2>
+        <div className="grid grid-cols-3 gap-3">
+          {owners.map((owner) => {
+            const name =
+              `${owner.first_name ?? ""} ${owner.last_name ?? ""}`.trim() ||
+              owner.email ||
+              "Owner";
+            return (
+              <article
+                key={owner.id}
+                className="rounded-xl border border-slate-800/80 bg-slate-950/80 p-4 flex-1"
+              >
+                <p className="font-medium text-white">{name}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Owner ID: <span className="font-mono">{owner.id}</span>
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Primary zone: {owner.zone_id ?? "Unknown"}
+                </p>
+              </article>
+            );
+          })}
+        </div>
       </div>
     </section>
   );

@@ -90,12 +90,15 @@ export default function Messages() {
       return raw == null ? "" : String(raw).trim();
     };
 
-    if (!composeZoneId) return [];
-
     return owners.filter((row) => {
-      const sameZone = readOwnerZoneId(row) === composeZoneId;
       const notSelf = Number(row.id) !== ownerId;
-      return sameZone && notSelf;
+      if (!notSelf) return false;
+      if (!composeZoneId) return true;
+      const ownerZoneId = readOwnerZoneId(row);
+      // Keep owners with unknown zone visible to avoid an empty picker
+      // when the backend omits zone metadata.
+      if (!ownerZoneId) return true;
+      return ownerZoneId === composeZoneId;
     });
   }, [owners, composeZoneId, ownerId]);
 

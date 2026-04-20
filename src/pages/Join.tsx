@@ -57,14 +57,14 @@ export default function Join() {
     setLoading(true);
     try {
       await register({
+        name: `${firstName} ${lastName}`.trim(),
         email,
         password,
-        first_name: firstName,
-        last_name: lastName,
-        account_type: "private",
+        accountType: "PRIVATE_PLUS",
+        registrationType: "USER",
         address,
         phone: phone || undefined,
-        zone_id: trimmedZone,
+        zoneId: trimmedZone,
       });
       navigate("/login");
     } catch {

@@ -22,206 +22,368 @@ interface EndpointSpec {
   method: HttpMethod;
   /** Path starting with /; may include {param} segments */
   path: string;
+  group: "core" | "contract";
   description: string;
   params: ParamDef[];
   /** When true, show one JSON body textarea (uses param name "body" in values) */
   bodyJson?: boolean;
-  /** Skip Authorization header (login/register) */
+  /** Skip Authorization header (login/register/public utilities) */
   public?: boolean;
 }
 
 const ENDPOINTS: EndpointSpec[] = [
-  {
-    id: "owners-login",
-    method: "POST",
-    path: "/owners/login",
-    description: "Authenticate an owner and return an access token.",
-    public: true,
-    params: [
-      {
-        name: "email",
-        in: "body",
-        required: true,
-        placeholder: "owner@example.com",
-      },
-      {
-        name: "password",
-        in: "body",
-        required: true,
-        placeholder: "password",
-      },
-    ],
-  },
+  { id: "root-info", method: "GET", path: "/", group: "core", description: "Service info and docs links.", public: true, params: [] },
+  { id: "health-check", method: "GET", path: "/health", group: "core", description: "Health check endpoint.", public: true, params: [] },
   {
     id: "owners-register",
     method: "POST",
     path: "/owners/register",
-    description: "Register a new owner account.",
+    group: "core",
+    description: "Register owner/user account.",
     public: true,
     bodyJson: true,
-    params: [
-      {
-        name: "body",
-        in: "body",
-        required: true,
-        placeholder: "JSON body",
-      },
-    ],
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
   },
   {
-    id: "owners-me",
-    method: "GET",
-    path: "/owners/me",
-    description: "Return the current authenticated owner profile.",
-    params: [],
+    id: "owners-login",
+    method: "POST",
+    path: "/owners/login",
+    group: "core",
+    description: "Core owner login and JWT issuance.",
+    public: true,
+    params: [
+      { name: "email", in: "body", required: true, placeholder: "owner@example.com" },
+      { name: "password", in: "body", required: true, placeholder: "password" },
+    ],
   },
+  { id: "owners-me", method: "GET", path: "/owners/me", group: "core", description: "Get current authenticated owner profile.", params: [] },
   {
     id: "owners-list",
     method: "GET",
     path: "/owners/",
-    description: "List registered owner accounts (paginated).",
+    group: "core",
+    description: "List caller-visible owners.",
     params: [
       { name: "skip", in: "query", type: "number", placeholder: "0" },
       { name: "limit", in: "query", type: "number", placeholder: "100" },
     ],
   },
   {
+    id: "owners-get-by-id",
+    method: "GET",
+    path: "/owners/{owner_id}",
+    group: "core",
+    description: "Get caller-visible owner by id.",
+    params: [{ name: "owner_id", in: "path", required: true, placeholder: "owner id" }],
+  },
+  {
     id: "owners-patch",
     method: "PATCH",
     path: "/owners/{owner_id}",
-    description: "Partially update an owner (e.g. active flag, name).",
-    params: [
-      { name: "owner_id", in: "path", required: true, placeholder: "id" },
-    ],
+    group: "core",
+    description: "Update owner profile (self).",
     bodyJson: true,
+    params: [
+      { name: "owner_id", in: "path", required: true, placeholder: "owner id" },
+      { name: "body", in: "body", required: true, placeholder: "JSON body" },
+    ],
   },
   {
-    id: "devices-list",
-    method: "GET",
+    id: "owners-delete",
+    method: "DELETE",
+    path: "/owners/{owner_id}",
+    group: "core",
+    description: "Delete owner profile (self).",
+    params: [{ name: "owner_id", in: "path", required: true, placeholder: "owner id" }],
+  },
+  { id: "devices-list", method: "GET", path: "/devices/", group: "core", description: "List caller-visible devices.", params: [] },
+  {
+    id: "devices-create",
+    method: "POST",
     path: "/devices/",
-    description: "List devices for the authenticated owner.",
-    params: [],
+    group: "core",
+    description: "Create device.",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
   },
   {
     id: "devices-get",
     method: "GET",
     path: "/devices/{device_id}",
-    description: "Get a single device by numeric id.",
-    params: [
-      { name: "device_id", in: "path", required: true, placeholder: "device id" },
-    ],
+    group: "core",
+    description: "Get device by numeric id.",
+    params: [{ name: "device_id", in: "path", required: true, placeholder: "device id" }],
   },
   {
-    id: "devices-create",
-    method: "POST",
-    path: "/devices/",
-    description: "Create a new device for the authenticated owner.",
-    bodyJson: true,
-    params: [
-      {
-        name: "body",
-        in: "body",
-        required: true,
-        placeholder: "JSON body",
-      },
-    ],
+    id: "devices-get-by-hid",
+    method: "GET",
+    path: "/devices/network/hid/{hid}",
+    group: "core",
+    description: "Get device by hardware id (HID).",
+    params: [{ name: "hid", in: "path", required: true, placeholder: "DEV-A1B2C3" }],
   },
   {
     id: "devices-patch",
     method: "PATCH",
     path: "/devices/{device_id}",
+    group: "core",
     description: "Update device settings.",
-    params: [
-      { name: "device_id", in: "path", required: true, placeholder: "device id" },
-    ],
     bodyJson: true,
-  },
-  {
-    id: "devices-heartbeat",
-    method: "POST",
-    path: "/devices/{device_id}/heartbeat",
-    description: "Send a heartbeat for a device (no body).",
     params: [
       { name: "device_id", in: "path", required: true, placeholder: "device id" },
+      { name: "body", in: "body", required: true, placeholder: "JSON body" },
     ],
   },
   {
     id: "devices-location",
     method: "POST",
     path: "/devices/{device_id}/location",
-    description: "Update device GPS location.",
+    group: "core",
+    description: "Update location and H3 cell for device.",
     params: [
       { name: "device_id", in: "path", required: true, placeholder: "device id" },
-      {
-        name: "latitude",
-        in: "body",
-        type: "number",
-        required: true,
-        placeholder: "47.6205",
-      },
-      {
-        name: "longitude",
-        in: "body",
-        type: "number",
-        required: true,
-        placeholder: "-122.3493",
-      },
-      {
-        name: "address",
-        in: "body",
-        required: false,
-        placeholder: "optional address string",
-      },
+      { name: "latitude", in: "body", type: "number", required: true, placeholder: "47.6205" },
+      { name: "longitude", in: "body", type: "number", required: true, placeholder: "-122.3493" },
+      { name: "address", in: "body", placeholder: "optional address" },
     ],
+  },
+  {
+    id: "devices-heartbeat",
+    method: "POST",
+    path: "/devices/{device_id}/heartbeat",
+    group: "core",
+    description: "Update online/last_seen presence.",
+    params: [{ name: "device_id", in: "path", required: true, placeholder: "device id" }],
+  },
+  {
+    id: "devices-delete",
+    method: "DELETE",
+    path: "/devices/{device_id}",
+    group: "core",
+    description: "Delete device.",
+    params: [{ name: "device_id", in: "path", required: true, placeholder: "device id" }],
+  },
+  {
+    id: "zones-create",
+    method: "POST",
+    path: "/zones/",
+    group: "core",
+    description: "Create zone.",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
   },
   {
     id: "zones-list",
     method: "GET",
     path: "/zones/",
-    description: "List zones for the authenticated owner.",
-    params: [],
+    group: "core",
+    description: "List zones (supports owner_id, zone_id, skip, limit).",
+    params: [
+      { name: "owner_id", in: "query", placeholder: "42" },
+      { name: "zone_id", in: "query", placeholder: "ZONE-7A29" },
+      { name: "skip", in: "query", type: "number", placeholder: "0" },
+      { name: "limit", in: "query", type: "number", placeholder: "100" },
+    ],
+  },
+  {
+    id: "zones-by-zone-id",
+    method: "GET",
+    path: "/zones/{zone_id}",
+    group: "core",
+    description: "List zones by shared zone_id visible to caller.",
+    params: [{ name: "zone_id", in: "path", required: true, placeholder: "ZONE-7A29" }],
+  },
+  {
+    id: "zones-patch",
+    method: "PATCH",
+    path: "/zones/{zone_id}",
+    group: "core",
+    description: "Update zone.",
+    bodyJson: true,
+    params: [
+      { name: "zone_id", in: "path", required: true, placeholder: "ZONE-7A29" },
+      { name: "body", in: "body", required: true, placeholder: "JSON body" },
+    ],
+  },
+  {
+    id: "zones-delete",
+    method: "DELETE",
+    path: "/zones/{zone_id}",
+    group: "core",
+    description: "Delete zone.",
+    params: [{ name: "zone_id", in: "path", required: true, placeholder: "ZONE-7A29" }],
+  },
+  {
+    id: "messages-create-core",
+    method: "POST",
+    path: "/messages/",
+    group: "core",
+    description: "Create zone message (public/private).",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "messages-list-core",
+    method: "GET",
+    path: "/messages",
+    group: "core",
+    description: "Canonical messages list endpoint.",
+    params: [
+      { name: "owner_id", in: "query", required: true, placeholder: "42" },
+      { name: "other_owner_id", in: "query", placeholder: "84" },
+      { name: "skip", in: "query", type: "number", placeholder: "0" },
+      { name: "limit", in: "query", type: "number", placeholder: "100" },
+    ],
+  },
+  {
+    id: "messages-list-core-compat",
+    method: "GET",
+    path: "/messages/",
+    group: "core",
+    description: "Backward-compatible alias for /messages.",
+    params: [
+      { name: "owner_id", in: "query", required: true, placeholder: "42" },
+      { name: "other_owner_id", in: "query", placeholder: "84" },
+      { name: "skip", in: "query", type: "number", placeholder: "0" },
+      { name: "limit", in: "query", type: "number", placeholder: "100" },
+    ],
   },
   {
     id: "h3-convert",
     method: "POST",
     path: "/utils/h3/convert",
-    description: "Convert latitude and longitude to an H3 cell id.",
+    group: "core",
+    description: "Convert lat/lng to H3.",
     params: [
-      {
-        name: "latitude",
-        in: "body",
-        type: "number",
-        required: true,
-        placeholder: "34.0522",
-      },
-      {
-        name: "longitude",
-        in: "body",
-        type: "number",
-        required: true,
-        placeholder: "-118.2437",
-      },
-      {
-        name: "resolution",
-        in: "body",
-        type: "number",
-        required: false,
-        placeholder: "13",
-      },
+      { name: "latitude", in: "body", type: "number", required: true, placeholder: "34.0522" },
+      { name: "longitude", in: "body", type: "number", required: true, placeholder: "-118.2437" },
+      { name: "resolution", in: "body", type: "number", placeholder: "13" },
+    ],
+  },
+  {
+    id: "qr-generate",
+    method: "POST",
+    path: "/utils/qr/generate",
+    group: "core",
+    description: "Generate QR invite token (private accounts only).",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "qr-join",
+    method: "POST",
+    path: "/utils/qr/join",
+    group: "core",
+    description: "Register via QR invite token.",
+    public: true,
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "contract-login",
+    method: "POST",
+    path: "/login",
+    group: "contract",
+    description: "Contract login endpoint.",
+    public: true,
+    params: [
+      { name: "email", in: "body", required: true, placeholder: "owner@example.com" },
+      { name: "password", in: "body", required: true, placeholder: "password" },
+    ],
+  },
+  {
+    id: "contract-register",
+    method: "POST",
+    path: "/register",
+    group: "contract",
+    description: "Contract registration endpoint.",
+    public: true,
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  { id: "contract-me", method: "GET", path: "/me", group: "contract", description: "Contract owner profile endpoint.", params: [] },
+  { id: "contract-zones-list", method: "GET", path: "/zones", group: "contract", description: "Contract zones list endpoint.", params: [] },
+  {
+    id: "contract-zones-create",
+    method: "POST",
+    path: "/zones",
+    group: "contract",
+    description: "Contract create zone endpoint.",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "contract-zones-update",
+    method: "PUT",
+    path: "/zones/{zone_id}",
+    group: "contract",
+    description: "Contract update zone endpoint.",
+    bodyJson: true,
+    params: [
+      { name: "zone_id", in: "path", required: true, placeholder: "ZONE-7A29" },
+      { name: "body", in: "body", required: true, placeholder: "JSON body" },
+    ],
+  },
+  {
+    id: "contract-zones-delete",
+    method: "DELETE",
+    path: "/zones/{zone_id}",
+    group: "contract",
+    description: "Contract delete zone endpoint.",
+    params: [{ name: "zone_id", in: "path", required: true, placeholder: "ZONE-7A29" }],
+  },
+  {
+    id: "contract-messages-create",
+    method: "POST",
+    path: "/messages",
+    group: "contract",
+    description: "Create contract message (legacy/chat payload).",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "contract-messages-new",
+    method: "GET",
+    path: "/messages/new",
+    group: "contract",
+    description: "Get new messages since an ISO datetime cursor.",
+    params: [{ name: "since", in: "query", required: true, placeholder: "2026-01-01T00:00:00Z" }],
+  },
+  { id: "contract-members-list", method: "GET", path: "/members", group: "contract", description: "List visible members.", params: [] },
+  {
+    id: "contract-members-location",
+    method: "POST",
+    path: "/members/location",
+    group: "contract",
+    description: "Upsert current member location.",
+    params: [
+      { name: "latitude", in: "body", type: "number", required: true, placeholder: "34.0522" },
+      { name: "longitude", in: "body", type: "number", required: true, placeholder: "-118.2437" },
+    ],
+  },
+  {
+    id: "contract-devices-push-token",
+    method: "POST",
+    path: "/devices/push-token",
+    group: "contract",
+    description: "Register push token.",
+    params: [
+      { name: "token", in: "body", required: true, placeholder: "<push-token>" },
+      { name: "platform", in: "body", required: true, placeholder: "FCM" },
     ],
   },
 ];
 
 const DEFAULT_JSON: Record<string, string> = {
   "owners-register": `{
-  "email": "owner@example.com",
-  "password": "password123",
-  "first_name": "Alex",
-  "last_name": "Chen",
+  "email": "admin@example.com",
+  "zone_id": "ZONE-7A29",
+  "first_name": "Avery",
+  "last_name": "Stone",
   "account_type": "private",
-  "phone": "+1234567890",
-  "zone_id": "ZN-4F8A2C",
-  "address": "123 Zone St"
+  "role": "administrator",
+  "address": "101 Main St, Denver, CO, USA",
+  "password": "strong-password-123"
 }`,
   "owners-patch": `{
   "first_name": "Alex",
@@ -242,6 +404,62 @@ const DEFAULT_JSON: Record<string, string> = {
   "devices-patch": `{
   "name": "Front Gate Tracker v2",
   "propagate_enabled": false
+}`,
+  "zones-create": `{
+  "zone_id": "ZONE-7A29",
+  "name": "Main Zone",
+  "zone_type": "warn",
+  "h3_cells": ["8928308280fffff"]
+}`,
+  "zones-patch": `{
+  "name": "Main Zone (updated)",
+  "h3_cells": ["8928308280fffff", "8928308280bffff"]
+}`,
+  "messages-create-core": `{
+  "owner_id": 42,
+  "zone_id": "ZONE-7A29",
+  "message": "Perimeter updated",
+  "visibility": "public"
+}`,
+  "h3-convert": `{
+  "latitude": 34.0522,
+  "longitude": -118.2437,
+  "resolution": 13
+}`,
+  "qr-generate": `{
+  "zone_id": "ZONE-7A29",
+  "expires_in_seconds": 900
+}`,
+  "qr-join": `{
+  "token": "<invite-token>",
+  "email": "new.user@example.com",
+  "password": "strong-password-123",
+  "first_name": "Sam",
+  "last_name": "Rivera"
+}`,
+  "contract-register": `{
+  "name": "Alex Chen",
+  "email": "alex@geozone.io",
+  "password": "strong-password-123",
+  "accountType": "PRIVATE",
+  "registrationType": "ADMINISTRATOR",
+  "zoneId": "ZONE-7A29",
+  "address": "101 Main St, Denver, CO, USA"
+}`,
+  "contract-zones-create": `{
+  "zone_id": "ZONE-7A29",
+  "name": "Contract Zone",
+  "zone_type": "geofence",
+  "h3_cells": ["8928308280fffff"]
+}`,
+  "contract-zones-update": `{
+  "name": "Contract Zone (updated)",
+  "h3_cells": ["8928308280fffff", "8928308280bffff"]
+}`,
+  "contract-messages-create": `{
+  "zone_id": "ZONE-7A29",
+  "message": "Hello from contract route",
+  "visibility": "public"
 }`,
 };
 
@@ -521,6 +739,9 @@ export default function ApiDocs() {
                     >
                       {ep.method}
                     </span>
+                    <span className="rounded bg-slate-800/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      {ep.group}
+                    </span>
                     <span className="break-all font-mono text-xs text-slate-200">
                       {ep.path}
                     </span>
@@ -533,6 +754,18 @@ export default function ApiDocs() {
         </aside>
 
         <div className="min-w-0 flex-1 overflow-y-auto p-5">
+          <section className="mb-6 rounded-2xl border border-slate-800/80 bg-slate-950/60 p-4 text-sm text-slate-300">
+            <p>
+              Auth styles: <span className="font-semibold text-slate-100">Core routes</span>{" "}
+              use token from <code>/owners/login</code>;{" "}
+              <span className="font-semibold text-slate-100">Contract routes</span>{" "}
+              use token from <code>/login</code>.
+            </p>
+            <p className="mt-2 text-slate-400">
+              WebSocket endpoints: <code>/ws?token=&lt;jwt&gt;</code> and{" "}
+              <code>/ws/messages?token=&lt;jwt&gt;</code> (compat alias).
+            </p>
+          </section>
           {selected && (
             <div className="space-y-6">
               <div>
