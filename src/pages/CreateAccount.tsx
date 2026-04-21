@@ -38,17 +38,17 @@ const accountOptions: {
   {
     value: "PRIVATE_PLUS",
     title: "Private+",
-    lines: ["Admin and users", "Expanded account controls"],
+    lines: ["Up to 10 devices", "Expanded account controls"],
   },
   {
     value: "ENHANCED",
     title: "Enhanced",
-    lines: ["Advanced account", "Extended zone capabilities"],
+    lines: ["1 device only", "Extended zone capabilities"],
   },
   {
     value: "ENHANCED_PLUS",
     title: "Enhanced+",
-    lines: ["Premium account", "Maximum controls"],
+    lines: ["Unlimited devices", "Maximum controls"],
   },
 ];
 

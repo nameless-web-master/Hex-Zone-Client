@@ -34,6 +34,13 @@ const DM_ADDRESS_LABEL =
   "mb-1.5 block text-xs font-semibold uppercase tracking-[0.15em] text-slate-500";
 const DM_ADDRESS_INPUT =
   "w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1] focus:outline-none focus:ring-2 focus:ring-[#00E5D1]/30";
+const DEVICE_LIMIT_MESSAGE_BY_ACCOUNT = {
+  PRIVATE: "",
+  EXCLUSIVE: "Exclusive accounts are limited to 1 device.",
+  PRIVATE_PLUS: "Private+ accounts can register up to 10 devices.",
+  ENHANCED: "Enhanced accounts are limited to 1 device.",
+  ENHANCED_PLUS: "",
+} as const;
 
 type Device = DeviceResponse & {
   /** Person shown in the Devices "User" column (from assignment or API). */
@@ -168,6 +175,31 @@ function defaultForm(device: Device): DeviceFormState {
   };
 }
 
+type NormalizedAccountType =
+  | "PRIVATE"
+  | "EXCLUSIVE"
+  | "PRIVATE_PLUS"
+  | "ENHANCED"
+  | "ENHANCED_PLUS";
+
+function normalizeAccountType(
+  accountType?: string | null,
+  legacyAccountType?: string | null,
+): NormalizedAccountType {
+  const upper = String(accountType ?? legacyAccountType ?? "").toUpperCase();
+  if (upper === "EXCLUSIVE") return "EXCLUSIVE";
+  if (upper === "PRIVATE_PLUS") return "PRIVATE_PLUS";
+  if (upper === "ENHANCED") return "ENHANCED";
+  if (upper === "ENHANCED_PLUS") return "ENHANCED_PLUS";
+  return "PRIVATE";
+}
+
+function getDeviceLimit(accountType: NormalizedAccountType): number {
+  if (accountType === "PRIVATE_PLUS") return 10;
+  if (accountType === "EXCLUSIVE" || accountType === "ENHANCED") return 1;
+  return Number.POSITIVE_INFINITY;
+}
+
 function remoteToForm(
   remote: DeviceResponse,
   fallback: Device,
@@ -193,12 +225,15 @@ function remoteToForm(
 
 export default function DeviceManager() {
   const { user } = useAuth();
+  const normalizedAccountType = normalizeAccountType(
+    user?.accountType,
+    user?.account_type,
+  );
   const currentWebHid = useMemo(
     () => String(localStorage.getItem(WEB_DEVICE_HID_KEY) ?? "").toUpperCase(),
     [],
   );
-  const isExclusiveAccount =
-    user?.accountType === "EXCLUSIVE" || user?.account_type === "exclusive";
+  const isExclusiveAccount = normalizedAccountType === "EXCLUSIVE";
   const [devices, setDevices] = useState<Device[]>([]);
   const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -544,6 +579,14 @@ export default function DeviceManager() {
       setAddError("This Device ID is already in use.");
       return;
     }
+    const deviceLimit = getDeviceLimit(normalizedAccountType);
+    if (devices.length >= deviceLimit) {
+      setAddError(
+        DEVICE_LIMIT_MESSAGE_BY_ACCOUNT[normalizedAccountType] ||
+          "This account has reached its device limit.",
+      );
+      return;
+    }
     const deviceLabel =
       addForm.deviceName.trim() ||
       `${(ru.displayName.split(/\s+/)[0] || "User").replace(/[^a-zA-Z]/g, "") || "User"} Device`;
@@ -697,7 +740,11 @@ export default function DeviceManager() {
   const warningCopy =
     accountLabel === "Private"
       ? `All devices in a Private account must share the same zone type. Each user defines three (3) acceptable zones based on H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
-      : `Account zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}). Each user may define multiple acceptable cells.`;
+      : accountLabel === "Private+"
+        ? `Private+ supports up to 10 devices. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
+        : accountLabel === "Exclusive" || accountLabel === "Enhanced"
+          ? `${accountLabel} accounts support one registered device. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
+          : `Enhanced+ has no device cap. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`;
 
   return (
     <div className="space-y-6 pb-8">

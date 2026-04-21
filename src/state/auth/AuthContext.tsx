@@ -51,8 +51,32 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const DEVICE_HID_KEY = "zoneweaver_device_hid";
-const EXCLUSIVE_DEVICE_LIMIT_ERROR =
-  "Exclusive accounts can only sign in from their registered device.";
+const DEVICE_LIMIT_ERROR_BY_ACCOUNT: Record<AccountType, string> = {
+  PRIVATE: "",
+  EXCLUSIVE: "Exclusive accounts can only sign in from their registered device.",
+  PRIVATE_PLUS: "Private+ accounts can register up to 10 devices.",
+  ENHANCED: "Enhanced accounts can only sign in from one registered device.",
+  ENHANCED_PLUS: "",
+};
+
+function getAccountDeviceLimit(accountType: AccountType): number {
+  if (accountType === "PRIVATE_PLUS") return 10;
+  if (accountType === "EXCLUSIVE" || accountType === "ENHANCED") return 1;
+  return Number.POSITIVE_INFINITY;
+}
+
+function normalizeAccountType(
+  primary?: AccountType,
+  legacy?: string | null,
+): AccountType {
+  if (primary) return primary;
+  const normalizedLegacy = String(legacy ?? "").toUpperCase();
+  if (normalizedLegacy === "PRIVATE_PLUS") return "PRIVATE_PLUS";
+  if (normalizedLegacy === "EXCLUSIVE") return "EXCLUSIVE";
+  if (normalizedLegacy === "ENHANCED") return "ENHANCED";
+  if (normalizedLegacy === "ENHANCED_PLUS") return "ENHANCED_PLUS";
+  return "PRIVATE";
+}
 
 function randomHidSuffix(len = 8): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -75,8 +99,10 @@ async function upsertCurrentDevice(user: AuthUser | null) {
   if (!user) return;
   const hid = getOrCreateDeviceHid();
   const displayName = user.name?.trim() || user.email?.trim() || "Web Device";
-  const isExclusiveAccount =
-    user.accountType === "EXCLUSIVE" || user.account_type === "exclusive";
+  const normalizedAccountType = normalizeAccountType(
+    user.accountType,
+    user.account_type,
+  );
   const currentUserId = String(user.id ?? user.accountOwnerId ?? "").trim();
   const payload = {
     hid,
@@ -99,12 +125,16 @@ async function upsertCurrentDevice(user: AuthUser | null) {
     return;
   }
 
-  if (isExclusiveAccount && currentUserId) {
-    const ownerHasDevice = list.some(
+  if (currentUserId) {
+    const ownerDeviceCount = list.filter(
       (d) => String((d as { owner_id?: unknown }).owner_id ?? "") === currentUserId,
-    );
-    if (ownerHasDevice) {
-      throw new Error(EXCLUSIVE_DEVICE_LIMIT_ERROR);
+    ).length;
+    const deviceLimit = getAccountDeviceLimit(normalizedAccountType);
+    if (ownerDeviceCount >= deviceLimit) {
+      throw new Error(
+        DEVICE_LIMIT_ERROR_BY_ACCOUNT[normalizedAccountType] ||
+          "This account has reached its device limit.",
+      );
     }
   }
 
@@ -317,7 +347,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void upsertCurrentDevice(user).catch((err: unknown) => {
       if (
         err instanceof Error &&
-        err.message === EXCLUSIVE_DEVICE_LIMIT_ERROR
+        Object.values(DEVICE_LIMIT_ERROR_BY_ACCOUNT)
+          .filter(Boolean)
+          .includes(err.message)
       ) {
         void performLogout(false);
         return;
