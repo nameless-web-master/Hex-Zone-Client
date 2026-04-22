@@ -53,6 +53,8 @@ export type RegisterPayload = {
   zoneId?: string;
   phone?: string;
   address?: string;
+  /** From GET /utils/registration-code (or legacy); required for administrator self-registration. */
+  registrationCode?: string;
 };
 
 type LoginResponse = {
@@ -77,6 +79,7 @@ type LegacyRegisterPayload = {
   account_owner_id?: number;
   phone?: string;
   address?: string;
+  registration_code?: string;
 };
 
 function toLegacyAccountType(accountType: AccountType): string {
@@ -99,6 +102,7 @@ function parseRegistrationType(value?: string): RegistrationType {
 function mapLegacyRegisterPayload(payload: RegisterPayload): LegacyRegisterPayload {
   const [first, ...rest] = payload.name.trim().split(/\s+/);
   const last = rest.join(" ");
+  const trimmedCode = payload.registrationCode?.trim();
   return {
     email: payload.email,
     password: payload.password,
@@ -110,6 +114,75 @@ function mapLegacyRegisterPayload(payload: RegisterPayload): LegacyRegisterPaylo
     account_owner_id: payload.accountOwnerId,
     phone: payload.phone,
     address: payload.address,
+    ...(trimmedCode ? { registration_code: trimmedCode } : {}),
+  };
+}
+
+function parseRegistrationCodePayload(data: unknown): string | null {
+  if (data == null) return null;
+  if (typeof data === "string") {
+    const t = data.trim();
+    return t || null;
+  }
+  if (typeof data !== "object") return null;
+  const row = data as Record<string, unknown>;
+  if (typeof row.data === "string") {
+    const t = row.data.trim();
+    return t || null;
+  }
+  const nested =
+    row.data && typeof row.data === "object"
+      ? (row.data as Record<string, unknown>)
+      : null;
+  const pick = (obj: Record<string, unknown> | null) => {
+    if (!obj) return undefined;
+    return (
+      obj.registration_code ??
+      obj.registrationCode ??
+      obj.code
+    );
+  };
+  const raw = pick(row) ?? pick(nested);
+  if (typeof raw === "string") {
+    const t = raw.trim();
+    return t || null;
+  }
+  return null;
+}
+
+/** Public: load a server-issued registration code for the create-account page. */
+export async function fetchRegistrationCode(): Promise<{
+  data: string | null;
+  error: string | null;
+  loading: boolean;
+}> {
+  const primary = await request<unknown>({
+    method: "GET",
+    url: "/utils/registration-code",
+  });
+  const codePrimary =
+    primary.data != null ? parseRegistrationCodePayload(primary.data) : null;
+  if (!primary.error && codePrimary) {
+    return { data: codePrimary, error: null, loading: false };
+  }
+
+  const legacy = await request<unknown>({
+    method: "GET",
+    url: "/owners/registration-code",
+  });
+  const codeLegacy =
+    legacy.data != null ? parseRegistrationCodePayload(legacy.data) : null;
+  if (!legacy.error && codeLegacy) {
+    return { data: codeLegacy, error: null, loading: false };
+  }
+
+  return {
+    data: null,
+    error:
+      primary.error ||
+      legacy.error ||
+      "Could not load registration code from the server.",
+    loading: false,
   };
 }
 

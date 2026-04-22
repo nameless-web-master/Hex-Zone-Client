@@ -33,6 +33,7 @@ type LegacyRegisterPayload = {
   account_owner_id?: number;
   phone?: string;
   address?: string;
+  registration_code?: string;
 };
 
 type AuthContextValue = {
@@ -205,6 +206,7 @@ function mapLegacyRegister(payload: LegacyRegisterPayload): RegisterPayload {
     zoneId: payload.zone_id,
     phone: payload.phone,
     address: payload.address,
+    registrationCode: payload.registration_code,
   };
 }
 

@@ -1,8 +1,12 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ChevronRight, Eye, EyeOff, QrCode } from "lucide-react";
+import { ChevronRight, Eye, EyeOff, Loader2, QrCode, RefreshCw } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
-import type { AccountType, RegistrationType } from "../services/api";
+import {
+  fetchRegistrationCode,
+  type AccountType,
+  type RegistrationType,
+} from "../services/api";
 import AuthMapPanel from "../components/AuthMapPanel";
 import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
 import {
@@ -76,6 +80,25 @@ export default function CreateAccount() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [registrationCode, setRegistrationCode] = useState("");
+  const [regCodeLoading, setRegCodeLoading] = useState(true);
+  const [regCodeError, setRegCodeError] = useState<string | null>(null);
+
+  const loadRegistrationCode = useCallback(async () => {
+    setRegCodeLoading(true);
+    setRegCodeError(null);
+    const result = await fetchRegistrationCode();
+    if (result.error || !result.data) {
+      setRegistrationCode("");
+      setRegCodeError(result.error ?? "Could not load registration code.");
+    } else {
+      setRegistrationCode(result.data);
+    }
+    setRegCodeLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void loadRegistrationCode();
+  }, [loadRegistrationCode]);
 
   const center = useMemo<[number, number]>(
     () => addressCoords ?? addressToMockCoords(address),
@@ -89,6 +112,14 @@ export default function CreateAccount() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
+    const code = registrationCode.trim();
+    if (!code) {
+      setError(
+        "Registration code is missing. Wait for the server to issue one, or use Retry.",
+      );
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -105,6 +136,7 @@ export default function CreateAccount() {
         address,
         phone: phone || undefined,
         zoneId: selectedZoneId,
+        registrationCode: code,
       });
       navigate("/login");
     } catch {
@@ -140,6 +172,51 @@ export default function CreateAccount() {
             </h1>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+              <div className="rounded-md border border-slate-700/80 bg-[#151a20] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label htmlFor="reg-code" className={labelClass}>
+                    Registration code
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void loadRegistrationCode()}
+                    disabled={regCodeLoading}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-600 bg-slate-800/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-300 transition hover:bg-slate-700/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {regCodeLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />
+                    )}
+                    Retry
+                  </button>
+                </div>
+                {regCodeLoading && (
+                  <p className="mt-2 flex items-center gap-2 text-sm text-slate-400">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" strokeWidth={2} />
+                    Requesting registration code from server…
+                  </p>
+                )}
+                {regCodeError && !regCodeLoading && (
+                  <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                    {regCodeError}
+                  </p>
+                )}
+                {!regCodeLoading && !regCodeError && (
+                  <input
+                    id="reg-code"
+                    readOnly
+                    value={registrationCode}
+                    className={`${inputClass} mt-2 font-mono text-[#00E5D1]`}
+                    aria-describedby="reg-code-hint"
+                  />
+                )}
+                <p id="reg-code-hint" className="mt-2 text-xs text-slate-500">
+                  Issued by the server when you open this page. It is sent again when you
+                  create your account, then you can sign in at Login.
+                </p>
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="reg-first" className={labelClass}>
@@ -296,23 +373,6 @@ export default function CreateAccount() {
                 )}
               </div>
 
-              <div className="rounded-md border border-dashed border-slate-700/80 bg-[#151a20] p-4">
-                <label htmlFor="reg-code" className={labelClass}>
-                  Registration code (planned)
-                </label>
-                <input
-                  id="reg-code"
-                  value={registrationCode}
-                  onChange={(e) => setRegistrationCode(e.target.value)}
-                  disabled
-                  placeholder="Backend validation endpoint pending"
-                  className={`${inputClass} cursor-not-allowed opacity-70`}
-                />
-                <p className="mt-2 text-xs text-slate-500">
-                  UI placeholder only. Validation flow will be enabled when backend support is available.
-                </p>
-              </div>
-
               <div className="rounded-md border border-slate-700/80 bg-[#151a20] p-4">
                 <p className={labelClass}>Zone ID</p>
                 <div className="flex flex-wrap gap-2">
@@ -406,7 +466,12 @@ export default function CreateAccount() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={
+                  loading ||
+                  regCodeLoading ||
+                  Boolean(regCodeError) ||
+                  !registrationCode.trim()
+                }
                 className={`flex w-full items-center justify-center gap-2 rounded-md ${accentBg} py-3.5 text-sm font-bold text-[#0B0E11] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
               >
                 {loading ? (

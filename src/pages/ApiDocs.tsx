@@ -35,6 +35,16 @@ const ENDPOINTS: EndpointSpec[] = [
   { id: "root-info", method: "GET", path: "/", group: "core", description: "Service info and docs links.", public: true, params: [] },
   { id: "health-check", method: "GET", path: "/health", group: "core", description: "Health check endpoint.", public: true, params: [] },
   {
+    id: "utils-registration-code",
+    method: "GET",
+    path: "/utils/registration-code",
+    group: "core",
+    description:
+      "Public: server issues a registration code for the create-account flow (frontend loads on /register). Fallback: GET /owners/registration-code.",
+    public: true,
+    params: [],
+  },
+  {
     id: "owners-register",
     method: "POST",
     path: "/owners/register",
@@ -383,7 +393,8 @@ const DEFAULT_JSON: Record<string, string> = {
   "account_type": "private",
   "role": "administrator",
   "address": "101 Main St, Denver, CO, USA",
-  "password": "strong-password-123"
+  "password": "strong-password-123",
+  "registration_code": "FREE"
 }`,
   "owners-patch": `{
   "first_name": "Alex",
@@ -444,7 +455,8 @@ const DEFAULT_JSON: Record<string, string> = {
   "accountType": "PRIVATE",
   "registrationType": "ADMINISTRATOR",
   "zoneId": "ZONE-7A29",
-  "address": "101 Main St, Denver, CO, USA"
+  "address": "101 Main St, Denver, CO, USA",
+  "registrationCode": "FREE"
 }`,
   "contract-zones-create": `{
   "zone_id": "ZONE-7A29",
