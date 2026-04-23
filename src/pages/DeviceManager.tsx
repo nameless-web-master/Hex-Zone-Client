@@ -644,16 +644,24 @@ export default function DeviceManager() {
       const detail =
         e && typeof e === "object" && "response" in e
           ? String(
-              (e as { response?: { data?: { detail?: string; message?: string } } })
-                .response?.data?.detail ??
-                (e as { response?: { data?: { detail?: string; message?: string } } })
-                  .response?.data?.message ??
+              (
+                e as {
+                  response?: { data?: { detail?: string; message?: string } };
+                }
+              ).response?.data?.detail ??
+                (
+                  e as {
+                    response?: { data?: { detail?: string; message?: string } };
+                  }
+                ).response?.data?.message ??
                 "",
             )
           : "";
       const status =
         e && typeof e === "object" && "response" in e
-          ? Number((e as { response?: { status?: number } }).response?.status ?? 0)
+          ? Number(
+              (e as { response?: { status?: number } }).response?.status ?? 0,
+            )
           : 0;
       if (
         status === 403 &&
@@ -864,11 +872,11 @@ export default function DeviceManager() {
                     className="px-6 py-10 text-center text-slate-500"
                     colSpan={5}
                   >
-                    No devices yet. Use{" "}
-                    <span className="text-slate-300">Add device</span> to
-                    register one, or ensure{" "}
-                    <code className="text-slate-400">GET /devices/</code>{" "}
-                    returns data from the server.
+                    No devices yet. Please{" "}
+                    <span className="text-slate-300">Refresh</span> to
+                    get devices, or check your{" "}
+                    <code className="text-slate-400">Network Connection</code>{" "}
+                    and try again later.
                   </td>
                 </tr>
               ) : (
@@ -1345,7 +1353,9 @@ export default function DeviceManager() {
                         : "—"}
                     </p>
                     {drawerDevice.owner?.email && (
-                      <p className="text-xs text-slate-500">{drawerDevice.owner.email}</p>
+                      <p className="text-xs text-slate-500">
+                        {drawerDevice.owner.email}
+                      </p>
                     )}
                     {drawerDevice.owner?.account_type && (
                       <p className="text-xs text-slate-500">

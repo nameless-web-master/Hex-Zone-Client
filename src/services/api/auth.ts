@@ -41,6 +41,7 @@ export type OwnerListItem = {
   role?: UserRole;
   account_type?: string;
   account_owner_id?: number | null;
+  address?: string;
 };
 
 export type LoginPayload = {
