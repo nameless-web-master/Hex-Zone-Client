@@ -334,6 +334,161 @@ function extractZoneCenter(zone: SavedZone): [number, number] | null {
   return [latitude, longitude];
 }
 
+function normalizeLongitude(value: number): number {
+  // Keep longitudes visible in wrapped maps (e.g. -540 -> -180).
+  return ((((value + 180) % 360) + 360) % 360) - 180;
+}
+
+function parseCircleDraftsFromZone(
+  zone: SavedZone,
+  kind: "proximity" | "dynamic",
+  defaults: {
+    proximityRadiusMeters: number;
+    dynamicMinRadiusMeters: number;
+    dynamicMaxRadiusMeters: number;
+  },
+): DraftCircle[] {
+  const geometry =
+    zone.geometry && typeof zone.geometry === "object" ? zone.geometry : {};
+  const config =
+    zone.config && typeof zone.config === "object" ? zone.config : {};
+  const circlesRaw = Array.isArray((geometry as Record<string, unknown>).circles)
+    ? ((geometry as Record<string, unknown>).circles as unknown[])
+    : [];
+  const centersRaw = Array.isArray((geometry as Record<string, unknown>).centers)
+    ? ((geometry as Record<string, unknown>).centers as unknown[])
+    : [];
+  const radiiRaw = Array.isArray((config as Record<string, unknown>).radii_meters)
+    ? ((config as Record<string, unknown>).radii_meters as unknown[])
+    : [];
+  const rangesRaw = Array.isArray((config as Record<string, unknown>).circle_ranges)
+    ? ((config as Record<string, unknown>).circle_ranges as unknown[])
+    : [];
+  const defaultProximity = Number(
+    (config as Record<string, unknown>).radius_meters ?? defaults.proximityRadiusMeters,
+  );
+  const defaultDynamicMin = Number(
+    (config as Record<string, unknown>).min_radius_meters ??
+      defaults.dynamicMinRadiusMeters,
+  );
+  const defaultDynamicMax = Number(
+    (config as Record<string, unknown>).max_radius_meters ??
+      defaults.dynamicMaxRadiusMeters,
+  );
+
+  const makeCenter = (raw: unknown): [number, number] | null => {
+    if (!raw || typeof raw !== "object") return null;
+    const row = raw as Record<string, unknown>;
+    const lat = Number(row.latitude);
+    const lng = Number(row.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return [lat, normalizeLongitude(lng)];
+  };
+
+  const fromCircles: DraftCircle[] = [];
+  circlesRaw.forEach((raw, idx) => {
+      if (!raw || typeof raw !== "object") return null;
+      const row = raw as Record<string, unknown>;
+      const center = makeCenter(row.center);
+      if (!center) return null;
+      if (kind === "proximity") {
+        const radius = Number(row.radius_meters ?? defaultProximity);
+        if (!Number.isFinite(radius) || radius <= 0) return null;
+        fromCircles.push({
+          id: `${kind}-${zone.id}-circle-${idx}`,
+          center,
+          radiusMeters: radius,
+        });
+        return null;
+      }
+      const minRadius = Number(row.min_radius_meters ?? defaultDynamicMin);
+      const maxRadius = Number(row.max_radius_meters ?? defaultDynamicMax);
+      const normalizedMin = Number.isFinite(minRadius) ? minRadius : defaultDynamicMin;
+      const normalizedMax = Number.isFinite(maxRadius)
+        ? Math.max(maxRadius, normalizedMin)
+        : Math.max(defaultDynamicMax, normalizedMin);
+      if (normalizedMax <= 0) return null;
+      fromCircles.push({
+        id: `${kind}-${zone.id}-circle-${idx}`,
+        center,
+        radiusMeters: normalizedMax,
+        minRadiusMeters: Math.max(normalizedMin, 0),
+        maxRadiusMeters: normalizedMax,
+      });
+      return null;
+    });
+  if (fromCircles.length > 0) return fromCircles;
+
+  const fromCenters: DraftCircle[] = [];
+  centersRaw.forEach((raw, idx) => {
+      const center = makeCenter(raw);
+      if (!center) return null;
+      if (kind === "proximity") {
+        const perCircleRadius = Number(radiiRaw[idx] ?? defaultProximity);
+        if (!Number.isFinite(perCircleRadius) || perCircleRadius <= 0) return null;
+        fromCenters.push({
+          id: `${kind}-${zone.id}-center-${idx}`,
+          center,
+          radiusMeters: perCircleRadius,
+        });
+        return null;
+      }
+      const rangeRaw = rangesRaw[idx];
+      const minRadius =
+        rangeRaw && typeof rangeRaw === "object"
+          ? Number((rangeRaw as Record<string, unknown>).min_radius_meters)
+          : defaultDynamicMin;
+      const maxRadius =
+        rangeRaw && typeof rangeRaw === "object"
+          ? Number((rangeRaw as Record<string, unknown>).max_radius_meters)
+          : defaultDynamicMax;
+      const normalizedMin = Number.isFinite(minRadius) ? minRadius : defaultDynamicMin;
+      const normalizedMax = Number.isFinite(maxRadius)
+        ? Math.max(maxRadius, normalizedMin)
+        : Math.max(defaultDynamicMax, normalizedMin);
+      if (normalizedMax <= 0) return null;
+      fromCenters.push({
+        id: `${kind}-${zone.id}-center-${idx}`,
+        center,
+        radiusMeters: normalizedMax,
+        minRadiusMeters: Math.max(normalizedMin, 0),
+        maxRadiusMeters: normalizedMax,
+      });
+      return null;
+    });
+  if (fromCenters.length > 0) return fromCenters;
+
+  const singleCenter = extractZoneCenter(zone);
+  if (!singleCenter) return [];
+  if (kind === "proximity") {
+    const radius = Number.isFinite(defaultProximity) ? defaultProximity : 0;
+    return radius > 0
+      ? [
+          {
+            id: `${kind}-${zone.id}-single`,
+            center: singleCenter,
+            radiusMeters: radius,
+          },
+        ]
+      : [];
+  }
+  const minRadius = Number.isFinite(defaultDynamicMin) ? defaultDynamicMin : 0;
+  const maxRadius = Number.isFinite(defaultDynamicMax)
+    ? Math.max(defaultDynamicMax, minRadius)
+    : minRadius;
+  return maxRadius > 0
+    ? [
+        {
+          id: `${kind}-${zone.id}-single`,
+          center: singleCenter,
+          radiusMeters: maxRadius,
+          minRadiusMeters: minRadius,
+          maxRadiusMeters: maxRadius,
+        },
+      ]
+    : [];
+}
+
 type ZoneEntry = {
   zone: SavedZone;
   key: string;
@@ -727,38 +882,22 @@ export default function Dashboard() {
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
     setPolygons(zoneToPolygons(chosen.zone));
-    const center = extractZoneCenter(chosen.zone);
-    const radius = Number((chosenConfig as Record<string, unknown>).radius_meters ?? 0);
-    const minRadius = Number(
-      (chosenConfig as Record<string, unknown>).min_radius_meters ?? 0,
-    );
-    const maxRadius = Number(
-      (chosenConfig as Record<string, unknown>).max_radius_meters ?? 0,
-    );
     setProximityCircles(
-      normalizedType === "proximity" && center && radius > 0
-        ? [
-            {
-              id: `zone-${chosen.key}-proximity`,
-              center,
-              radiusMeters: radius,
-            },
-          ]
+      normalizedType === "proximity"
+        ? parseCircleDraftsFromZone(chosen.zone, "proximity", {
+            proximityRadiusMeters: 500,
+            dynamicMinRadiusMeters: 200,
+            dynamicMaxRadiusMeters: 1000,
+          })
         : [],
     );
     setDynamicCircles(
-      normalizedType === "dynamic" &&
-        center &&
-        (minRadius > 0 || maxRadius > 0)
-        ? [
-            {
-              id: `zone-${chosen.key}-dynamic`,
-              center,
-              radiusMeters: Math.max(maxRadius, minRadius),
-              minRadiusMeters: minRadius,
-              maxRadiusMeters: Math.max(maxRadius, minRadius),
-            },
-          ]
+      normalizedType === "dynamic"
+        ? parseCircleDraftsFromZone(chosen.zone, "dynamic", {
+            proximityRadiusMeters: 500,
+            dynamicMinRadiusMeters: 200,
+            dynamicMaxRadiusMeters: 1000,
+          })
         : [],
     );
   }, [zoneEntries, activeSavedZoneKey, isCreatingNewZone]);
@@ -1420,8 +1559,6 @@ export default function Dashboard() {
   const loadSavedZone = useCallback((entry: ZoneEntry) => {
     const zone = entry.zone;
     const normalizedType = normalizeZoneTypeValue(zone.type ?? zone.zone_type);
-    const zoneConfig =
-      zone.config && typeof zone.config === "object" ? zone.config : {};
     setIsCreatingNewZone(false);
     setActiveSavedZoneKey(entry.key);
     setActiveSavedZoneEditable(entry.editable);
@@ -1429,36 +1566,22 @@ export default function Dashboard() {
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
     setPolygons(zoneToPolygons(zone));
-    const center = extractZoneCenter(zone);
-    const radius = Number((zoneConfig as Record<string, unknown>).radius_meters ?? 0);
-    const minRadius = Number(
-      (zoneConfig as Record<string, unknown>).min_radius_meters ?? 0,
-    );
-    const maxRadius = Number(
-      (zoneConfig as Record<string, unknown>).max_radius_meters ?? 0,
-    );
     setProximityCircles(
-      normalizedType === "proximity" && center && radius > 0
-        ? [
-            {
-              id: `zone-${entry.key}-proximity`,
-              center,
-              radiusMeters: radius,
-            },
-          ]
+      normalizedType === "proximity"
+        ? parseCircleDraftsFromZone(zone, "proximity", {
+            proximityRadiusMeters: proximityRadiusMeters || 500,
+            dynamicMinRadiusMeters: dynamicMinRadiusMeters || 200,
+            dynamicMaxRadiusMeters: dynamicMaxRadiusMeters || 1000,
+          })
         : [],
     );
     setDynamicCircles(
-      normalizedType === "dynamic" && center && (minRadius > 0 || maxRadius > 0)
-        ? [
-            {
-              id: `zone-${entry.key}-dynamic`,
-              center,
-              radiusMeters: Math.max(maxRadius, minRadius),
-              minRadiusMeters: minRadius,
-              maxRadiusMeters: Math.max(maxRadius, minRadius),
-            },
-          ]
+      normalizedType === "dynamic"
+        ? parseCircleDraftsFromZone(zone, "dynamic", {
+            proximityRadiusMeters: proximityRadiusMeters || 500,
+            dynamicMinRadiusMeters: dynamicMinRadiusMeters || 200,
+            dynamicMaxRadiusMeters: dynamicMaxRadiusMeters || 1000,
+          })
         : [],
     );
     setSaveStatus(
@@ -1466,7 +1589,11 @@ export default function Dashboard() {
         ? `Loaded ${zone.name ?? `zone ${savedZoneId(zone)}`}.`
         : `Loaded ${zone.name ?? `zone ${savedZoneId(zone)}`} (read-only).`,
     );
-  }, []);
+  }, [
+    dynamicMaxRadiusMeters,
+    dynamicMinRadiusMeters,
+    proximityRadiusMeters,
+  ]);
 
   const copyZoneId = async () => {
     if (!zoneId) {
