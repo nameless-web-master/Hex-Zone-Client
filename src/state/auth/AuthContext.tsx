@@ -53,7 +53,7 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const DEVICE_HID_KEY = "zoneweaver_device_hid";
 const DEVICE_LIMIT_ERROR_BY_ACCOUNT: Record<AccountType, string> = {
-  PRIVATE: "",
+  PRIVATE: "Private accounts can only register 1 device.",
   EXCLUSIVE: "Exclusive accounts can only sign in from their registered device.",
   PRIVATE_PLUS: "Private+ accounts can register up to 10 devices.",
   ENHANCED: "Enhanced accounts can only sign in from one registered device.",
@@ -61,6 +61,7 @@ const DEVICE_LIMIT_ERROR_BY_ACCOUNT: Record<AccountType, string> = {
 };
 
 function getAccountDeviceLimit(accountType: AccountType): number {
+  if (accountType === "PRIVATE") return 1;
   if (accountType === "PRIVATE_PLUS") return 10;
   if (accountType === "EXCLUSIVE" || accountType === "ENHANCED") return 1;
   return Number.POSITIVE_INFINITY;
@@ -140,6 +141,18 @@ async function upsertCurrentDevice(user: AuthUser | null) {
   }
 
   const created = await createDevice(payload);
+  if (
+    created.error &&
+    (/max devices|device limit|403|forbidden/i.test(created.error) ||
+      /limit/i.test(created.error))
+  ) {
+    throw new Error(
+      created.error.includes("max devices")
+        ? created.error
+        : DEVICE_LIMIT_ERROR_BY_ACCOUNT[normalizedAccountType] ||
+            "This account has reached its device limit.",
+    );
+  }
   if (created.data?.id != null) {
     await request({
       method: "PATCH",
@@ -278,6 +291,10 @@ function normalizeUser(raw: AuthUser | null): AuthUser | null {
     account_owner_id: accountOwnerId,
     mapCenter,
     map_center: mapCenter,
+    active:
+      typeof (raw as AuthUser & { active?: unknown }).active === "boolean"
+        ? ((raw as AuthUser & { active?: boolean }).active as boolean)
+        : true,
     zoneId,
     zone_id: raw.zone_id ?? zoneId,
   };

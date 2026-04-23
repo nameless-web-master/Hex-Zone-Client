@@ -532,14 +532,13 @@ export default function Dashboard() {
   );
 
   const [locationQuery, setLocationQuery] = useState("");
-  const [activeSidebarTab, setActiveSidebarTab] =
-    useState<DashboardTab>("zones");
 
   const [pasteText, setPasteText] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
   const [activeSavedZoneKey, setActiveSavedZoneKey] = useState<string | null>(
     null,
   );
+  const [isCreatingNewZone, setIsCreatingNewZone] = useState(false);
   const [activeSavedZoneEditable, setActiveSavedZoneEditable] =
     useState<boolean>(false);
   const [removedCellIds, setRemovedCellIds] = useState<Set<string>>(
@@ -552,8 +551,14 @@ export default function Dashboard() {
     zones,
     loading: loadingZones,
     error: zonesError,
-    saveZoneWithRebalance,
-  } = useZones(userZoneId);
+    saveZone,
+    updateSavedZone,
+  } = useZones(userZoneId, {
+    role: user?.role,
+    currentUserId: user?.id != null ? String(user.id) : null,
+    accountOwnerId:
+      user?.account_owner_id != null ? String(user.account_owner_id) : null,
+  });
   const currentUserId = useMemo(() => {
     const raw = user?.id;
     if (raw == null) return "";
@@ -579,6 +584,12 @@ export default function Dashboard() {
       }),
     [zones, currentUserId],
   );
+  const activeZoneEntry = useMemo(
+    () => zoneEntries.find((entry) => entry.key === activeSavedZoneKey) ?? null,
+    [zoneEntries, activeSavedZoneKey],
+  );
+  const canEditCurrentSelection =
+    isCreatingNewZone || (!!activeZoneEntry && activeSavedZoneEditable);
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -620,6 +631,7 @@ export default function Dashboard() {
   }, [user?.id, user?.address]);
 
   useEffect(() => {
+    if (isCreatingNewZone) return;
     if (zoneEntries.length === 0) return;
     const chosen =
       (activeSavedZoneKey != null &&
@@ -640,7 +652,7 @@ export default function Dashboard() {
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
     setPolygons(zoneToPolygons(chosen.zone));
-  }, [zoneEntries, activeSavedZoneKey]);
+  }, [zoneEntries, activeSavedZoneKey, isCreatingNewZone]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -763,6 +775,15 @@ export default function Dashboard() {
         setMeasureA(p);
         setMeasureB(null);
         setMeasureLabelKm(null);
+        return;
+      }
+
+      if (!canEditCurrentSelection) {
+        setSaveStatus(
+          zones.length === 0
+            ? "No zone selected. Click Create new zone to start drawing."
+            : "Selected zone is read-only. Choose one of your own zones or create a new zone.",
+        );
         return;
       }
 
@@ -915,6 +936,7 @@ export default function Dashboard() {
     },
     [
       activeTool,
+      canEditCurrentSelection,
       mapperMode,
       resolution,
       toggleCell,
@@ -926,6 +948,7 @@ export default function Dashboard() {
       draftRing,
       holeParentId,
       polygons,
+      zones.length,
       measureA,
       measureB,
     ],
@@ -1062,7 +1085,7 @@ export default function Dashboard() {
       setSaveStatus("Your account has no zone ID.");
       return;
     }
-    if (!activeSavedZoneEditable) {
+    if (!isCreatingNewZone && !activeSavedZoneEditable) {
       setSaveStatus("Selected zone is read-only. Choose one of your own zones to edit.");
       return;
     }
@@ -1080,17 +1103,23 @@ export default function Dashboard() {
     setSaveStatus("Saving…");
     try {
       const payload = {
-        zone_id: zoneId,
+        // zone_id: zoneId,
         name: zoneName,
         description,
         zone_type: zoneType,
         h3_cells: allWorkingCells,
         geo_fence_polygon: polygonsToGeoFenceMultiPolygon(allWorkingPolygons),
       };
-      const result = await saveZoneWithRebalance(payload);
-      setSaveStatus(
-        `Zone saved. Removed ${result.removedFromNewCount} overlapping cell(s); updated ${result.updatedPreviousZonesCount} previous zone(s).`,
-      );
+      if (isCreatingNewZone) {
+        await saveZone(payload);
+        setSaveStatus("New zone created successfully.");
+        setIsCreatingNewZone(false);
+      } else if (activeZoneEntry) {
+        await updateSavedZone(savedZoneRecordId(activeZoneEntry.zone), payload);
+        setSaveStatus("Zone updated successfully.");
+      } else {
+        setSaveStatus("Select a zone to edit, or click Create new zone.");
+      }
     } catch (err) {
       console.error(err);
       setSaveStatus(
@@ -1103,6 +1132,7 @@ export default function Dashboard() {
 
   const loadSavedZone = useCallback((entry: ZoneEntry) => {
     const zone = entry.zone;
+    setIsCreatingNewZone(false);
     setActiveSavedZoneKey(entry.key);
     setActiveSavedZoneEditable(entry.editable);
     setSelectedCells(Array.isArray(zone.h3_cells) ? [...zone.h3_cells] : []);
@@ -1128,6 +1158,33 @@ export default function Dashboard() {
       setSaveStatus("Could not copy.");
     }
   };
+
+  const startNewZoneDraft = useCallback(() => {
+    setIsCreatingNewZone(true);
+    setActiveSavedZoneKey(null);
+    setActiveSavedZoneEditable(true);
+    setSelectedCells([]);
+    setRemovedCellIds(new Set());
+    setRemovedPolygonKeys(new Set());
+    setPolygons([]);
+    setDraftRing([]);
+    setDrawingActive(false);
+    setHoleParentId(null);
+    setSaveStatus("New zone mode: draw cells/polygons, then Save zone.");
+  }, []);
+
+  const cancelNewZoneDraft = useCallback(() => {
+    if (!isCreatingNewZone) return;
+    setIsCreatingNewZone(false);
+    setSelectedCells([]);
+    setRemovedCellIds(new Set());
+    setRemovedPolygonKeys(new Set());
+    setPolygons([]);
+    setDraftRing([]);
+    setDrawingActive(false);
+    setHoleParentId(null);
+    setSaveStatus("New zone creation canceled.");
+  }, [isCreatingNewZone]);
 
   const totalPolyAreaKm2 = useMemo(
     () => allWorkingPolygons.reduce((s, p) => s + geoPolygonAreaKm2(p), 0),
@@ -1261,13 +1318,6 @@ export default function Dashboard() {
       <div className="flex min-h-[min(100dvh,920px)] flex-1 flex-col lg:min-h-[calc(100dvh-11rem)] lg:flex-row">
         <aside className="flex w-full flex-col border-slate-800/80 lg:w-[400px] lg:shrink-0 lg:border-r">
           <div className="max-h-[50vh] flex-1 space-y-4 overflow-y-auto p-4 sm:p-5 lg:max-h-none">
-            <DashboardTabs
-              activeTab={activeSidebarTab}
-              onChange={setActiveSidebarTab}
-            />
-            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-              Active tab: {activeSidebarTab}
-            </p>
             <div>
               <p className={labelClass}>Zone ID</p>
               <div className="flex gap-2">
@@ -1607,9 +1657,32 @@ export default function Dashboard() {
                   <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                     Saved zones ({zones.length})
                   </p>
-                  {loadingZones && (
-                    <span className="text-[10px] text-slate-500">Loading…</span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {loadingZones && (
+                      <span className="text-[10px] text-slate-500">Loading…</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={startNewZoneDraft}
+                      disabled={isCreatingNewZone}
+                      className={`rounded border px-2 py-1 text-[10px] uppercase tracking-[0.12em] transition ${
+                        isCreatingNewZone
+                          ? "border-[#00E5D1] bg-[#00E5D1]/15 text-[#00E5D1]"
+                          : "border-slate-700/80 text-slate-300 hover:border-[#00E5D1]/50 hover:text-[#00E5D1]"
+                      }`}
+                    >
+                      {isCreatingNewZone ? "Creating..." : "Create new zone"}
+                    </button>
+                    {isCreatingNewZone && (
+                      <button
+                        type="button"
+                        onClick={cancelNewZoneDraft}
+                        className="rounded border border-red-500/40 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-red-300 transition hover:bg-red-500/10"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="max-h-36 overflow-y-auto rounded-md border border-slate-700/80 bg-[#0d1117] p-2">
                   {zonesError ? (
@@ -1623,6 +1696,7 @@ export default function Dashboard() {
                       {zoneEntries.map((entry, idx) => {
                         const zone = entry.zone;
                         const isActive =
+                          !isCreatingNewZone &&
                           activeSavedZoneKey != null &&
                           activeSavedZoneKey === entry.key;
                         return (
@@ -1799,7 +1873,7 @@ export default function Dashboard() {
                 onClick={handleSave}
                 className="ml-auto min-w-[120px] flex-1 rounded-md bg-[#00E5D1] px-4 py-2.5 text-sm font-bold text-[#0B0E11] sm:flex-none"
               >
-                Save zone
+                {isCreatingNewZone ? "Create zone" : "Save zone"}
               </button>
             </div>
             {saveStatus ? (

@@ -35,10 +35,14 @@ export default function Login() {
       await login(email, password, { rememberMe });
       navigate("/dashboard");
     } catch (err) {
-      setError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Login failed. Check your credentials and try again.",
+          : "Login failed. Check your credentials and try again.";
+      setError(
+        /inactive|expired|403/i.test(message)
+          ? "Account is inactive or expired"
+          : message,
       );
     } finally {
       setLoading(false);

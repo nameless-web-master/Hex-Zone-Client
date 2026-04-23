@@ -35,7 +35,7 @@ const DM_ADDRESS_LABEL =
 const DM_ADDRESS_INPUT =
   "w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1] focus:outline-none focus:ring-2 focus:ring-[#00E5D1]/30";
 const DEVICE_LIMIT_MESSAGE_BY_ACCOUNT = {
-  PRIVATE: "",
+  PRIVATE: "Private accounts can register up to 1 device.",
   EXCLUSIVE: "Exclusive accounts are limited to 1 device.",
   PRIVATE_PLUS: "Private+ accounts can register up to 10 devices.",
   ENHANCED: "Enhanced accounts are limited to 1 device.",
@@ -148,6 +148,19 @@ function ownerForDevice(
   device: Device,
   owners: RegisteredUser[],
 ): RegisteredUser | undefined {
+  if (device.owner?.id != null) {
+    const first = String(device.owner.first_name ?? "").trim();
+    const last = String(device.owner.last_name ?? "").trim();
+    const displayName =
+      `${first} ${last}`.trim() ||
+      device.owner.email?.trim() ||
+      `User ${device.owner.id}`;
+    return {
+      id: String(device.owner.id),
+      displayName,
+      email: String(device.owner.email ?? ""),
+    };
+  }
   const ownerId = device.owner_id != null ? String(device.owner_id) : null;
   if (!ownerId) return undefined;
   return owners.find((o) => o.id === ownerId);
@@ -195,6 +208,7 @@ function normalizeAccountType(
 }
 
 function getDeviceLimit(accountType: NormalizedAccountType): number {
+  if (accountType === "PRIVATE") return 1;
   if (accountType === "PRIVATE_PLUS") return 10;
   if (accountType === "EXCLUSIVE" || accountType === "ENHANCED") return 1;
   return Number.POSITIVE_INFINITY;
@@ -626,7 +640,32 @@ export default function DeviceManager() {
       setSettingsForHid(normalizedHid, cachePayload);
       await loadDevices();
       closeAddModal();
-    } catch {
+    } catch (e: unknown) {
+      const detail =
+        e && typeof e === "object" && "response" in e
+          ? String(
+              (e as { response?: { data?: { detail?: string; message?: string } } })
+                .response?.data?.detail ??
+                (e as { response?: { data?: { detail?: string; message?: string } } })
+                  .response?.data?.message ??
+                "",
+            )
+          : "";
+      const status =
+        e && typeof e === "object" && "response" in e
+          ? Number((e as { response?: { status?: number } }).response?.status ?? 0)
+          : 0;
+      if (
+        status === 403 &&
+        /max devices|device limit|limit|forbidden/i.test(detail || "403")
+      ) {
+        setAddError(
+          detail ||
+            DEVICE_LIMIT_MESSAGE_BY_ACCOUNT[normalizedAccountType] ||
+            "Device limit reached for this account.",
+        );
+        return;
+      }
       const localDev: LocalManagedDevice = {
         id: -Date.now(),
         hid: normalizedHid,
@@ -659,6 +698,7 @@ export default function DeviceManager() {
         ...device,
         user_display_name: owner.displayName,
         user_email: owner.email,
+        owner_id: device.owner_id ?? Number(owner.id),
       };
     });
 
@@ -703,6 +743,10 @@ export default function DeviceManager() {
       const email = device.user_email?.trim() || `${username}@geozone.io`;
       const ui = deriveUiStatus(device);
       const active = device.active;
+      const ownerActive =
+        typeof device.owner?.active === "boolean"
+          ? device.owner.active
+          : Boolean(active);
       const highlight =
         (!!user?.email &&
           device.user_email?.toLowerCase() === user.email.toLowerCase()) ||
@@ -714,6 +758,7 @@ export default function DeviceManager() {
         deviceId: device.hid,
         zone: zoneLabel(device.h3_cell_id),
         active,
+        ownerActive,
         highlight,
       };
     });
@@ -910,9 +955,9 @@ export default function DeviceManager() {
                       {row.deviceId}
                     </td>
                     <td
-                      className={`px-6 py-4 ${userRowStatusClass(row.active)}`}
+                      className={`px-6 py-4 ${userRowStatusClass(row.ownerActive)}`}
                     >
-                      {row.active ? "active" : "inactive"}
+                      {row.ownerActive ? "active" : "inactive"}
                     </td>
                     <td
                       className="px-6 py-4 font-mono text-sm font-medium"
@@ -1287,6 +1332,27 @@ export default function DeviceManager() {
                       className="mt-2 w-full cursor-not-allowed rounded-md border border-slate-800 bg-slate-900/80 px-3 py-2.5 font-mono text-sm text-slate-400"
                       value={drawerDevice.hid}
                     />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
+                      Owner
+                    </label>
+                    <p className="mt-2 text-sm text-slate-300">
+                      {drawerDevice.owner
+                        ? `${drawerDevice.owner.first_name ?? ""} ${drawerDevice.owner.last_name ?? ""}`.trim() ||
+                          drawerDevice.owner.email ||
+                          `User ${drawerDevice.owner.id}`
+                        : "—"}
+                    </p>
+                    {drawerDevice.owner?.email && (
+                      <p className="text-xs text-slate-500">{drawerDevice.owner.email}</p>
+                    )}
+                    {drawerDevice.owner?.account_type && (
+                      <p className="text-xs text-slate-500">
+                        {String(drawerDevice.owner.role ?? "user")} ·{" "}
+                        {drawerDevice.owner.account_type}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">

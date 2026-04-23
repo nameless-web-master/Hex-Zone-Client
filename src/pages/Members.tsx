@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { getOwners, type OwnerListItem } from "../services/api/auth";
 import { getMembers, type Member } from "../services/api/members";
+import { updateOwner } from "../lib/api";
+import { useAuth } from "../hooks/useAuth";
 import { useAppState } from "../state/app/AppStateContext";
 
 function formatLastSeen(value?: string): string {
@@ -11,11 +13,14 @@ function formatLastSeen(value?: string): string {
 }
 
 export default function Members() {
+  const { user } = useAuth();
+  const isAdministrator = String(user?.role ?? "").toLowerCase() === "administrator";
   const { setMembers: setGlobalMembers } = useAppState();
   const [members, setMembers] = useState<Member[]>([]);
   const [owners, setOwners] = useState<OwnerListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updatingOwnerId, setUpdatingOwnerId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -41,6 +46,28 @@ export default function Members() {
       mounted = false;
     };
   }, [setGlobalMembers]);
+
+  const toggleOwnerActive = async (owner: OwnerListItem) => {
+    if (!isAdministrator) {
+      setError("Only administrators can update active status.");
+      return;
+    }
+    const current = Boolean(owner.active);
+    setUpdatingOwnerId(String(owner.id));
+    setError(null);
+    try {
+      await updateOwner(owner.id, { active: !current });
+      setOwners((prev) =>
+        prev.map((row) =>
+          row.id === owner.id ? { ...row, active: !current } : row,
+        ),
+      );
+    } catch {
+      setError("Could not update user status. Please try again.");
+    } finally {
+      setUpdatingOwnerId(null);
+    }
+  };
 
   return (
     <section className="space-y-6 p-8">
@@ -91,6 +118,21 @@ export default function Members() {
                 <p className="mt-1 text-xs text-slate-500">
                   Primary zone: {owner.zone_id ?? "Unknown"}
                 </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Status: {owner.active === false ? "inactive" : "active"}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void toggleOwnerActive(owner)}
+                  disabled={!isAdministrator || updatingOwnerId === String(owner.id)}
+                  className="mt-3 rounded-md border border-slate-700/80 px-3 py-1.5 text-xs text-slate-200 transition hover:border-[#00E5D1]/50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {updatingOwnerId === String(owner.id)
+                    ? "Updating..."
+                    : owner.active === false
+                      ? "Set active"
+                      : "Set inactive"}
+                </button>
               </article>
             );
           })}

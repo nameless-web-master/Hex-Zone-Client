@@ -22,6 +22,16 @@ export type DeviceRecord = {
   active?: boolean;
   status?: boolean;
   is_online?: boolean;
+  owner_id?: number | string;
+  owner?: {
+    id: number | string;
+    email?: string;
+    first_name?: string;
+    last_name?: string;
+    role?: "administrator" | "user" | string;
+    account_type?: string;
+    active?: boolean;
+  } | null;
 };
 
 export type UpsertDevicePayload = {

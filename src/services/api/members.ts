@@ -14,6 +14,10 @@ export type Member = {
   } | null;
   lastSeen?: string;
   zones?: string[];
+  role?: "administrator" | "user" | string;
+  active?: boolean;
+  account_owner_id?: number | string;
+  account_type?: string;
 };
 
 function normalizeMember(raw: unknown): Member | null {
@@ -50,6 +54,20 @@ function normalizeMember(raw: unknown): Member | null {
     location,
     lastSeen: typeof row.lastSeen === "string" ? row.lastSeen : undefined,
     zones,
+    role: typeof row.role === "string" ? row.role : undefined,
+    active: typeof row.active === "boolean" ? row.active : undefined,
+    account_owner_id:
+      row.account_owner_id != null
+        ? String(row.account_owner_id)
+        : row.accountOwnerId != null
+          ? String(row.accountOwnerId)
+          : undefined,
+    account_type:
+      typeof row.account_type === "string"
+        ? row.account_type
+        : typeof row.accountType === "string"
+          ? row.accountType
+          : undefined,
   };
 }
 

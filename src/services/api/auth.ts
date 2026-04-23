@@ -28,6 +28,7 @@ export type AuthUser = {
   phone?: string | null;
   mapCenter?: { latitude: number; longitude: number } | null;
   map_center?: { latitude: number; longitude: number } | null;
+  active?: boolean;
 };
 
 export type OwnerListItem = {
@@ -36,6 +37,10 @@ export type OwnerListItem = {
   first_name?: string;
   last_name?: string;
   zone_id?: string | number | null;
+  active?: boolean;
+  role?: UserRole;
+  account_type?: string;
+  account_owner_id?: number | null;
 };
 
 export type LoginPayload = {
@@ -227,14 +232,30 @@ export async function login(payload: LoginPayload, rememberMe = true) {
     persistToken(legacyData.token, rememberMe);
     return { ...legacy, data: legacyData };
   }
+  const combinedError = (primary.error || legacy.error || "Login failed").trim();
+  const normalizedLoginError =
+    combinedError.includes("403") ||
+    /inactive|expired/i.test(combinedError)
+      ? "Account is inactive or expired"
+      : combinedError;
   return {
     data: null,
-    error: primary.error || legacy.error || "Login failed",
+    error: normalizedLoginError,
     loading: false,
   };
 }
 
 export async function register(payload: RegisterPayload) {
+  if (
+    payload.registrationType === "USER" &&
+    payload.accountType === "EXCLUSIVE"
+  ) {
+    return {
+      data: null,
+      error: "Exclusive accounts cannot register users.",
+      loading: false,
+    };
+  }
   const primary = await request<{ id?: string }>({
     method: "POST",
     url: "/register",

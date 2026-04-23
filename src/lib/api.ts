@@ -146,6 +146,15 @@ export interface DeviceResponse {
   address?: string | null;
   h3_cell_id?: string | null;
   owner_id?: number;
+  owner?: {
+    id: number | string;
+    email?: string;
+    first_name?: string;
+    last_name?: string;
+    role?: "administrator" | "user" | string;
+    account_type?: string;
+    active?: boolean;
+  } | null;
   propagate_enabled?: boolean;
   propagate_radius_km?: number | null;
   active: boolean;

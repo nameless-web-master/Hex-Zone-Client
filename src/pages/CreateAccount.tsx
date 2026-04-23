@@ -108,6 +108,8 @@ export default function CreateAccount() {
 
   const selectedZoneId =
     useExistingZone && existingZoneId ? existingZoneId : zoneId;
+  const userOnExclusiveAccount =
+    registrationType === "USER" && accountType === "EXCLUSIVE";
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -117,6 +119,14 @@ export default function CreateAccount() {
       setError(
         "Registration code is missing. Wait for the server to issue one, or use Retry.",
       );
+      return;
+    }
+    if (userOnExclusiveAccount) {
+      setError("User registration is not available for exclusive accounts.");
+      return;
+    }
+    if (registrationType === "USER" && !accountOwnerId.trim()) {
+      setError("User registration requires a valid account owner ID.");
       return;
     }
 
@@ -139,9 +149,12 @@ export default function CreateAccount() {
         registrationCode: code,
       });
       navigate("/login");
-    } catch {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "";
       setError(
-        "Could not create account. Please review your details and try again.",
+        /422|exclusive|account owner|zone/i.test(message)
+          ? message
+          : "Could not create account. Please review your details and try again.",
       );
     } finally {
       setLoading(false);
@@ -303,7 +316,14 @@ export default function CreateAccount() {
                         key={option.value}
                         type="button"
                         onClick={() => {
+                          if (registrationType === "USER" && option.value === "EXCLUSIVE") {
+                            setError(
+                              "Exclusive account type is not valid for user registration.",
+                            );
+                            return;
+                          }
                           setAccountType(option.value);
+                          setError("");
                         }}
                         className={`rounded-md border px-4 py-4 text-left transition ${
                           active
@@ -369,6 +389,10 @@ export default function CreateAccount() {
                       placeholder="101"
                       className={inputClass}
                     />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Linked users must use the admin account owner ID and matching
+                      account type/zone scope.
+                    </p>
                   </div>
                 )}
               </div>
@@ -468,6 +492,7 @@ export default function CreateAccount() {
                 type="submit"
                 disabled={
                   loading ||
+                  userOnExclusiveAccount ||
                   regCodeLoading ||
                   Boolean(regCodeError) ||
                   !registrationCode.trim()
@@ -484,6 +509,12 @@ export default function CreateAccount() {
                 )}
               </button>
             </form>
+            {userOnExclusiveAccount && (
+              <p className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                User registration is disabled for exclusive accounts. Choose a
+                different account type or register as administrator.
+              </p>
+            )}
 
             <p className="mt-8 text-center text-sm text-slate-500">
               Already have an account?{" "}

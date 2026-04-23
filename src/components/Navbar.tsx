@@ -13,6 +13,13 @@ const appRoutes = [
 export default function Navbar() {
   const { user, token, logout } = useAuth();
   const isLoggedIn = Boolean(token);
+  const isPrivateAdministrator =
+    String(user?.role ?? "").toLowerCase() === "administrator" &&
+    String(user?.accountType ?? user?.account_type ?? "").toUpperCase() ===
+      "PRIVATE";
+  const visibleAppRoutes = appRoutes.filter(
+    (route) => route.path !== "/qr" || isPrivateAdministrator,
+  );
 
   return (
     <header className="border-b border-slate-800/80 bg-transparent backdrop-blur-xl fixed w-full z-50">
@@ -47,7 +54,7 @@ export default function Navbar() {
           {isLoggedIn ? (
             <>
               <nav className="hidden md:flex items-center gap-2">
-                {appRoutes.map((item) => {
+                {visibleAppRoutes.map((item) => {
                   const Icon = item.icon;
                   return (
                     <NavLink

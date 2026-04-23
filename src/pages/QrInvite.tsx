@@ -11,6 +11,10 @@ export default function QrInvite() {
   const [loadingToken, setLoadingToken] = useState(false);
   const [tokenError, setTokenError] = useState("");
   const userZoneId = String(user?.zone_id ?? user?.zoneId ?? "");
+  const isPrivateAdministrator =
+    String(user?.role ?? "").toLowerCase() === "administrator" &&
+    String(user?.accountType ?? user?.account_type ?? "").toUpperCase() ===
+      "PRIVATE";
 
   const joinUrl = useMemo(() => {
     if (!joinToken) return "";
@@ -21,7 +25,7 @@ export default function QrInvite() {
   }, [joinToken]);
 
   const requestToken = async () => {
-    if (!userZoneId) return;
+    if (!userZoneId || !isPrivateAdministrator) return;
     setLoadingToken(true);
     setTokenError("");
     try {
@@ -32,10 +36,16 @@ export default function QrInvite() {
         throw new Error("No token returned");
       }
       setJoinToken(response.token);
-    } catch {
+    } catch (e: unknown) {
       setJoinToken("");
+      const status =
+        e && typeof e === "object" && "response" in e
+          ? Number((e as { response?: { status?: number } }).response?.status ?? 0)
+          : 0;
       setTokenError(
-        "You can not create a QR invite token for this zone or account.",
+        status === 403
+          ? "Only private administrators can generate invite QR codes."
+          : "You can not create a QR invite token for this zone or account.",
       );
     } finally {
       setLoadingToken(false);
@@ -43,7 +53,7 @@ export default function QrInvite() {
   };
 
   useEffect(() => {
-    if (!userZoneId) {
+    if (!userZoneId || !isPrivateAdministrator) {
       setJoinToken("");
       return;
     }
@@ -87,6 +97,11 @@ export default function QrInvite() {
             <p className="text-sm leading-relaxed text-slate-400">
               No zone ID found on your account. Please update your profile
               first, then return here to share an invite.
+            </p>
+          )}
+          {!isPrivateAdministrator && (
+            <p className="mt-3 text-sm leading-relaxed text-amber-300">
+              QR invites are available only to private administrators.
             </p>
           )}
           {!!userZoneId && (
@@ -138,7 +153,7 @@ export default function QrInvite() {
                 <button
                   type="button"
                   onClick={() => void requestToken()}
-                  disabled={loadingToken || !userZoneId}
+                  disabled={loadingToken || !userZoneId || !isPrivateAdministrator}
                   className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-slate-700/80 bg-[#151a20]/90 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:border-[#00E5D1]/50 hover:text-[#00E5D1] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <RefreshCw className="h-4 w-4" strokeWidth={2} />
@@ -149,7 +164,9 @@ export default function QrInvite() {
           ) : (
             <p className="mt-6 text-sm text-slate-500">
               {userZoneId
-                ? "Generate a token to display your QR code invite."
+                ? isPrivateAdministrator
+                  ? "Generate a token to display your QR code invite."
+                  : "Only private administrators can generate QR invite tokens."
                 : "Your account needs a zone ID to generate a QR code."}
             </p>
           )}

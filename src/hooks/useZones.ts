@@ -15,7 +15,7 @@ export type SavedZone = {
 };
 
 function getZoneId(zone: SavedZone): number | string {
-  return zone.zone_id ?? zone.id;
+  return zone.id;
 }
 
 function asCellList(value: unknown): string[] {
@@ -130,7 +130,41 @@ async function fetchAccountZones(ownerZoneId: number | string): Promise<SavedZon
   return normalizeZoneList(alt.data);
 }
 
-export function useZones(ownerZoneId: number | string | null) {
+function filterZonesForScope(
+  zones: SavedZone[],
+  scope: {
+    role?: string | null;
+    currentUserId?: string | null;
+    accountOwnerId?: string | null;
+    ownerZoneId?: string | null;
+  },
+): SavedZone[] {
+  const role = String(scope.role ?? "").toLowerCase();
+  if (role === "administrator") return zones;
+  const currentUserId = String(scope.currentUserId ?? "");
+  const accountOwnerId = String(scope.accountOwnerId ?? "");
+  const ownerZoneId = String(scope.ownerZoneId ?? "");
+  return zones.filter((zone) => {
+    const ownerId = String(zone.owner_id ?? "");
+    const creatorId = String(zone.creator_id ?? "");
+    const zoneId = String(zone.zone_id ?? zone.id ?? "");
+    return (
+      (!!currentUserId && creatorId === currentUserId) ||
+      (!!currentUserId && ownerId === currentUserId) ||
+      (!!accountOwnerId && ownerId === accountOwnerId) ||
+      (!!ownerZoneId && zoneId === ownerZoneId)
+    );
+  });
+}
+
+export function useZones(
+  ownerZoneId: number | string | null,
+  scope?: {
+    role?: string | null;
+    currentUserId?: string | null;
+    accountOwnerId?: string | null;
+  },
+) {
   const [zones, setZones] = useState<SavedZone[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,13 +179,20 @@ export function useZones(ownerZoneId: number | string | null) {
     setError(null);
     try {
       const allZones = await fetchAccountZones(ownerZoneId);
-      setZones(allZones);
+      setZones(
+        filterZonesForScope(allZones, {
+          role: scope?.role,
+          currentUserId: scope?.currentUserId,
+          accountOwnerId: scope?.accountOwnerId,
+          ownerZoneId: String(ownerZoneId),
+        }),
+      );
     } catch {
       setError("Could not load saved zones.");
     } finally {
       setLoading(false);
     }
-  }, [ownerZoneId]);
+  }, [ownerZoneId, scope?.accountOwnerId, scope?.currentUserId, scope?.role]);
 
   const saveZone = useCallback(
     async (payload: Record<string, unknown>) => {
@@ -243,9 +284,33 @@ export function useZones(ownerZoneId: number | string | null) {
     [ownerZoneId, refresh],
   );
 
+  const updateSavedZone = useCallback(
+    async (zoneRef: number | string, payload: Record<string, unknown>) => {
+      const updateResult = await request<SavedZone>({
+        method: "PATCH",
+        url: `/zones/${zoneRef}`,
+        data: payload,
+      });
+      if (!updateResult.data || updateResult.error) {
+        throw new Error(updateResult.error ?? "Zone update failed");
+      }
+      await refresh();
+      return updateResult.data;
+    },
+    [refresh],
+  );
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  return { zones, loading, error, refresh, saveZone, saveZoneWithRebalance };
+  return {
+    zones,
+    loading,
+    error,
+    refresh,
+    saveZone,
+    saveZoneWithRebalance,
+    updateSavedZone,
+  };
 }
