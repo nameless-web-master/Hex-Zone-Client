@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import L from "leaflet";
 import type { LatLngExpression } from "leaflet";
 import {
+  Circle,
   CircleMarker,
   MapContainer,
   Polygon,
@@ -43,6 +44,14 @@ type HexMapperMapProps = {
   selectedCells: string[];
   savedZoneCellLayers: SavedZoneCellLayer[];
   savedZonePolygonLayers: SavedZonePolygonLayer[];
+  helperCircles?: Array<{
+    key: string;
+    center: [number, number];
+    radiusMeters: number;
+    color: string;
+    fillOpacity?: number;
+    dashArray?: string;
+  }>;
   h3Color: string;
   h3FillOpacity: number;
   /** Polygons */
@@ -173,6 +182,7 @@ export default function HexMapperMap({
   selectedCells,
   savedZoneCellLayers,
   savedZonePolygonLayers,
+  helperCircles = [],
   h3Color,
   h3FillOpacity,
   polygons,
@@ -303,6 +313,21 @@ export default function HexMapperMap({
             );
           }),
         )}
+
+        {helperCircles.map((circle) => (
+          <Circle
+            key={circle.key}
+            center={circle.center}
+            radius={circle.radiusMeters}
+            pathOptions={{
+              color: circle.color,
+              weight: 2,
+              fillColor: circle.color,
+              fillOpacity: circle.fillOpacity ?? 0.12,
+              dashArray: circle.dashArray,
+            }}
+          />
+        ))}
 
         {polygons.map((p) => {
           const rings = [p.outer, ...p.holes].filter((r) => r.length >= 3);

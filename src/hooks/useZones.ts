@@ -5,9 +5,12 @@ export type SavedZone = {
   zone_id?: number | string;
   id: number | string;
   name?: string;
+  type?: string;
   owner_id?: number | string;
   creator_id?: number | string;
   zone_type?: string;
+  geometry?: Record<string, unknown>;
+  config?: Record<string, unknown>;
   h3_cells?: string[];
   geo_fence?: [number, number][];
   geo_fence_polygon?: unknown;
@@ -56,11 +59,26 @@ function normalizeSavedZone(raw: unknown): SavedZone | null {
   const rawPolygon =
     row.geo_fence_polygon ?? row.geometry ?? config?.geometry ?? row.polygons;
   const rawGeoFence = row.geo_fence ?? config?.geo_fence;
+  const geometry =
+    row.geometry && typeof row.geometry === "object"
+      ? (row.geometry as Record<string, unknown>)
+      : undefined;
+  const configMap =
+    row.config && typeof row.config === "object"
+      ? (row.config as Record<string, unknown>)
+      : undefined;
+  const zoneType =
+    typeof row.zone_type === "string"
+      ? row.zone_type
+      : typeof row.type === "string"
+        ? row.type
+        : undefined;
 
   return {
     id: String(rawId),
     zone_id: String(rawZoneId),
     name: typeof row.name === "string" ? row.name : undefined,
+    type: typeof row.type === "string" ? row.type : zoneType,
     owner_id:
       row.owner_id != null
         ? (row.owner_id as number | string)
@@ -93,12 +111,9 @@ function normalizeSavedZone(raw: unknown): SavedZone | null {
                       (row.user as Record<string, unknown>).id != null
                     ? ((row.user as Record<string, unknown>).id as number | string)
                     : undefined,
-    zone_type:
-      typeof row.zone_type === "string"
-        ? row.zone_type
-        : typeof row.type === "string"
-          ? row.type
-          : undefined,
+    zone_type: zoneType,
+    geometry,
+    config: configMap,
     h3_cells: h3Cells,
     geo_fence: asGeoFence(rawGeoFence),
     geo_fence_polygon: rawPolygon,

@@ -44,6 +44,15 @@ const panel = "bg-[#151a20]";
 
 type MapperMode = "h3" | "polygon";
 type ActiveTool = null | "measure";
+type ZoneTypeMode =
+  | "geofence"
+  | "warn"
+  | "alert"
+  | "restricted"
+  | "proximity"
+  | "dynamic"
+  | "custom_1"
+  | "custom_2";
 
 type HexMapperExport = {
   version: 1;
@@ -300,12 +309,45 @@ function savedZoneRecordId(zone: SavedZone): string {
   return String(zone.id);
 }
 
+function normalizeZoneTypeValue(raw: unknown): ZoneTypeMode {
+  const value = String(raw ?? "").toLowerCase();
+  if (value === "warn") return "warn";
+  if (value === "alert") return "alert";
+  if (value === "restricted") return "restricted";
+  if (value === "proximity") return "proximity";
+  if (value === "dynamic") return "dynamic";
+  if (value === "custom_1") return "custom_1";
+  if (value === "custom_2") return "custom_2";
+  return "geofence";
+}
+
+function extractZoneCenter(zone: SavedZone): [number, number] | null {
+  const geometry =
+    zone.geometry && typeof zone.geometry === "object" ? zone.geometry : null;
+  const center =
+    geometry && typeof geometry.center === "object" && geometry.center
+      ? (geometry.center as Record<string, unknown>)
+      : null;
+  const latitude = Number(center?.latitude);
+  const longitude = Number(center?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return [latitude, longitude];
+}
+
 type ZoneEntry = {
   zone: SavedZone;
   key: string;
   ownerId: string | null;
   creatorId: string | null;
   editable: boolean;
+};
+
+type DraftCircle = {
+  id: string;
+  center: [number, number];
+  radiusMeters: number;
+  minRadiusMeters?: number;
+  maxRadiusMeters?: number;
 };
 
 function polygonKey(p: GeoPolygonShape): string {
@@ -497,7 +539,14 @@ export default function Dashboard() {
   const zoneId = useMemo(() => String(userZoneId ?? ""), [userZoneId]);
   const [zoneName] = useState("Operations Zone");
   const [description] = useState("Zone from dashboard console.");
-  const [zoneType] = useState("geofence");
+  const [zoneType, setZoneType] = useState<ZoneTypeMode>("geofence");
+  const [proximityRadiusMeters, setProximityRadiusMeters] = useState(500);
+  const [dynamicMinRadiusMeters, setDynamicMinRadiusMeters] = useState(200);
+  const [dynamicMaxRadiusMeters, setDynamicMaxRadiusMeters] = useState(1000);
+  const [communalCode, setCommunalCode] = useState("");
+  const [governmentLocalCode, setGovernmentLocalCode] = useState("");
+  const [proximityCircles, setProximityCircles] = useState<DraftCircle[]>([]);
+  const [dynamicCircles, setDynamicCircles] = useState<DraftCircle[]>([]);
 
   const [mapperMode, setMapperMode] = useState<MapperMode>("h3");
   const [resolution, setResolution] = useState(6);
@@ -590,6 +639,25 @@ export default function Dashboard() {
   );
   const canEditCurrentSelection =
     isCreatingNewZone || (!!activeZoneEntry && activeSavedZoneEditable);
+  const usesMapGeometry =
+    zoneType === "geofence" ||
+    zoneType === "warn" ||
+    zoneType === "alert" ||
+    zoneType === "restricted";
+  const typeVisual = useMemo(() => {
+    if (zoneType === "warn") return { color: "#F59E0B", label: "Warn" };
+    if (zoneType === "alert") return { color: "#EF4444", label: "Alert" };
+    if (zoneType === "restricted")
+      return { color: "#8B5CF6", label: "Restricted" };
+    if (zoneType === "proximity")
+      return { color: "#06B6D4", label: "Proximity" };
+    if (zoneType === "dynamic") return { color: "#22C55E", label: "Dynamic" };
+    if (zoneType === "custom_1")
+      return { color: "#64748B", label: "Communal ID (Pending)" };
+    if (zoneType === "custom_2")
+      return { color: "#64748B", label: "Gov Local Code (Pending)" };
+    return { color: accent, label: "Geofence" };
+  }, [zoneType]);
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -644,6 +712,13 @@ export default function Dashboard() {
       zoneEntries[0] ||
       null;
     if (!chosen) return;
+    const normalizedType = normalizeZoneTypeValue(
+      chosen.zone.type ?? chosen.zone.zone_type,
+    );
+    const chosenConfig =
+      chosen.zone.config && typeof chosen.zone.config === "object"
+        ? chosen.zone.config
+        : {};
     setActiveSavedZoneKey(chosen.key);
     setActiveSavedZoneEditable(chosen.editable);
     setSelectedCells(
@@ -652,6 +727,40 @@ export default function Dashboard() {
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
     setPolygons(zoneToPolygons(chosen.zone));
+    const center = extractZoneCenter(chosen.zone);
+    const radius = Number((chosenConfig as Record<string, unknown>).radius_meters ?? 0);
+    const minRadius = Number(
+      (chosenConfig as Record<string, unknown>).min_radius_meters ?? 0,
+    );
+    const maxRadius = Number(
+      (chosenConfig as Record<string, unknown>).max_radius_meters ?? 0,
+    );
+    setProximityCircles(
+      normalizedType === "proximity" && center && radius > 0
+        ? [
+            {
+              id: `zone-${chosen.key}-proximity`,
+              center,
+              radiusMeters: radius,
+            },
+          ]
+        : [],
+    );
+    setDynamicCircles(
+      normalizedType === "dynamic" &&
+        center &&
+        (minRadius > 0 || maxRadius > 0)
+        ? [
+            {
+              id: `zone-${chosen.key}-dynamic`,
+              center,
+              radiusMeters: Math.max(maxRadius, minRadius),
+              minRadiusMeters: minRadius,
+              maxRadiusMeters: Math.max(maxRadius, minRadius),
+            },
+          ]
+        : [],
+    );
   }, [zoneEntries, activeSavedZoneKey, isCreatingNewZone]);
 
   useEffect(() => {
@@ -701,6 +810,14 @@ export default function Dashboard() {
 
   const h3FillOpacity = h3OpacityPct / 100;
   const polygonFillOpacity = polygonOpacityPct / 100;
+  const effectiveH3Color =
+    zoneType === "geofence" ? accent : usesMapGeometry ? typeVisual.color : h3Color;
+  const effectivePolygonColor =
+    zoneType === "geofence"
+      ? accent
+      : usesMapGeometry
+        ? typeVisual.color
+        : polygonColor;
   const editableWorkingCells = useMemo(
     () =>
       activeSavedZoneEditable
@@ -783,6 +900,67 @@ export default function Dashboard() {
           zones.length === 0
             ? "No zone selected. Click Create new zone to start drawing."
             : "Selected zone is read-only. Choose one of your own zones or create a new zone.",
+        );
+        return;
+      }
+      if (!usesMapGeometry) {
+        if (zoneType === "proximity" || zoneType === "dynamic") {
+          const point: [number, number] = [lat, lng];
+          if (zoneType === "proximity") {
+            setProximityCircles((prev) => {
+              const hit = prev.find(
+                (circle) => distanceMeters(circle.center, point) <= circle.radiusMeters,
+              );
+              if (hit) {
+                setSaveStatus("Proximity circle removed.");
+                return prev.filter((c) => c.id !== hit.id);
+              }
+              setSaveStatus(
+                "Proximity circle added. Click inside a circle to remove it.",
+              );
+              return [
+                ...prev,
+                {
+                  id: `proximity-${Date.now()}-${Math.random()}`,
+                  center: point,
+                  radiusMeters: proximityRadiusMeters,
+                },
+              ];
+            });
+            return;
+          }
+          setDynamicCircles((prev) => {
+            const hit = prev.find(
+              (circle) =>
+                distanceMeters(circle.center, point) <=
+                Math.max(
+                  circle.maxRadiusMeters ?? 0,
+                  circle.minRadiusMeters ?? 0,
+                  circle.radiusMeters,
+                ),
+            );
+            if (hit) {
+              setSaveStatus("Dynamic circle removed.");
+              return prev.filter((c) => c.id !== hit.id);
+            }
+            setSaveStatus(
+              "Dynamic circle added. Click inside a circle to remove it.",
+            );
+            return [
+              ...prev,
+              {
+                id: `dynamic-${Date.now()}-${Math.random()}`,
+                center: point,
+                radiusMeters: Math.max(dynamicMaxRadiusMeters, dynamicMinRadiusMeters),
+                minRadiusMeters: dynamicMinRadiusMeters,
+                maxRadiusMeters: Math.max(dynamicMaxRadiusMeters, dynamicMinRadiusMeters),
+              },
+            ];
+          });
+          return;
+        }
+        setSaveStatus(
+          "This zone type uses config fields, not H3 cell drawing. Update fields and save.",
         );
         return;
       }
@@ -948,6 +1126,11 @@ export default function Dashboard() {
       draftRing,
       holeParentId,
       polygons,
+      proximityRadiusMeters,
+      dynamicMinRadiusMeters,
+      dynamicMaxRadiusMeters,
+      usesMapGeometry,
+      zoneType,
       zones.length,
       measureA,
       measureB,
@@ -1089,12 +1272,37 @@ export default function Dashboard() {
       setSaveStatus("Selected zone is read-only. Choose one of your own zones to edit.");
       return;
     }
-    const canSave = allWorkingCells.length > 0 || allWorkingPolygons.length > 0;
-    if (!canSave) {
-      setSaveStatus("Select H3 cells or add polygons before saving.");
+    const canSaveGeometry =
+      allWorkingCells.length > 0 || allWorkingPolygons.length > 0;
+    const canSaveByType =
+      usesMapGeometry
+        ? canSaveGeometry
+        : zoneType === "proximity"
+          ? proximityRadiusMeters > 0 && proximityCircles.length > 0
+          : zoneType === "dynamic"
+            ? dynamicMinRadiusMeters > 0 &&
+              dynamicMaxRadiusMeters >= dynamicMinRadiusMeters &&
+              dynamicCircles.length > 0
+            : zoneType === "custom_1"
+              ? communalCode.trim().length > 0
+              : zoneType === "custom_2"
+                ? governmentLocalCode.trim().length > 0
+                : true;
+    if (!canSaveByType) {
+      setSaveStatus(
+        usesMapGeometry
+          ? "Select H3 cells or add polygons before saving."
+          : zoneType === "proximity"
+            ? "Set a proximity radius before saving."
+            : zoneType === "dynamic"
+              ? "Set valid dynamic min/max radius values before saving."
+              : zoneType === "custom_1"
+                ? "Enter communal ID before saving."
+                : "Enter government local code before saving.",
+      );
       return;
     }
-    if (hasCrossResolutionOverlap(allWorkingCells)) {
+    if (usesMapGeometry && hasCrossResolutionOverlap(allWorkingCells)) {
       setSaveStatus(
         "Overlapping H3 cells across resolutions are not allowed. Remove parent/child duplicates before saving.",
       );
@@ -1102,13 +1310,92 @@ export default function Dashboard() {
     }
     setSaveStatus("Saving…");
     try {
+      const compatibilityZoneType = zoneType;
+      const proximityCenters = proximityCircles.map((circle) => ({
+        latitude: circle.center[0],
+        longitude: circle.center[1],
+      }));
+      const proximityCircleDefs = proximityCircles.map((circle) => ({
+        center: {
+          latitude: circle.center[0],
+          longitude: circle.center[1],
+        },
+        radius_meters: circle.radiusMeters,
+      }));
+      const dynamicCenters = dynamicCircles.map((circle) => ({
+        latitude: circle.center[0],
+        longitude: circle.center[1],
+      }));
+      const dynamicCircleDefs = dynamicCircles.map((circle) => ({
+        center: {
+          latitude: circle.center[0],
+          longitude: circle.center[1],
+        },
+        min_radius_meters: circle.minRadiusMeters ?? dynamicMinRadiusMeters,
+        max_radius_meters:
+          circle.maxRadiusMeters ??
+          Math.max(dynamicMaxRadiusMeters, dynamicMinRadiusMeters),
+      }));
+      const geometryPayload: Record<string, unknown> =
+        zoneType === "proximity"
+          ? {
+              center: proximityCenters[0] ?? {
+                latitude: mapCenter[0],
+                longitude: mapCenter[1],
+              },
+              centers: proximityCenters,
+              circles: proximityCircleDefs,
+            }
+          : zoneType === "dynamic"
+            ? {
+                center: dynamicCenters[0] ?? {
+                  latitude: mapCenter[0],
+                  longitude: mapCenter[1],
+                },
+                centers: dynamicCenters,
+                circles: dynamicCircleDefs,
+              }
+          : {
+              geo_fence_polygon: polygonsToGeoFenceMultiPolygon(allWorkingPolygons),
+            };
+      const configPayload: Record<string, unknown> = {
+        h3_cells: allWorkingCells,
+        ...(zoneType === "proximity"
+          ? {
+              radius_meters: proximityRadiusMeters,
+              radii_meters: proximityCircles.map((circle) => circle.radiusMeters),
+            }
+          : {}),
+        ...(zoneType === "dynamic"
+          ? {
+              min_radius_meters: dynamicMinRadiusMeters,
+              max_radius_meters: dynamicMaxRadiusMeters,
+              circle_ranges: dynamicCircles.map((circle) => ({
+                min_radius_meters:
+                  circle.minRadiusMeters ?? dynamicMinRadiusMeters,
+                max_radius_meters:
+                  circle.maxRadiusMeters ??
+                  Math.max(dynamicMaxRadiusMeters, dynamicMinRadiusMeters),
+              })),
+            }
+          : {}),
+        ...(zoneType === "custom_1"
+          ? { communal_id: communalCode.trim() }
+          : {}),
+        ...(zoneType === "custom_2"
+          ? { local_code: governmentLocalCode.trim() }
+          : {}),
+      };
       const payload = {
         // zone_id: zoneId,
         name: zoneName,
         description,
-        zone_type: zoneType,
+        zone_type: compatibilityZoneType,
+        type: zoneType,
         h3_cells: allWorkingCells,
         geo_fence_polygon: polygonsToGeoFenceMultiPolygon(allWorkingPolygons),
+        geometry: geometryPayload,
+        config: configPayload,
       };
       if (isCreatingNewZone) {
         await saveZone(payload);
@@ -1132,6 +1419,9 @@ export default function Dashboard() {
 
   const loadSavedZone = useCallback((entry: ZoneEntry) => {
     const zone = entry.zone;
+    const normalizedType = normalizeZoneTypeValue(zone.type ?? zone.zone_type);
+    const zoneConfig =
+      zone.config && typeof zone.config === "object" ? zone.config : {};
     setIsCreatingNewZone(false);
     setActiveSavedZoneKey(entry.key);
     setActiveSavedZoneEditable(entry.editable);
@@ -1139,6 +1429,38 @@ export default function Dashboard() {
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
     setPolygons(zoneToPolygons(zone));
+    const center = extractZoneCenter(zone);
+    const radius = Number((zoneConfig as Record<string, unknown>).radius_meters ?? 0);
+    const minRadius = Number(
+      (zoneConfig as Record<string, unknown>).min_radius_meters ?? 0,
+    );
+    const maxRadius = Number(
+      (zoneConfig as Record<string, unknown>).max_radius_meters ?? 0,
+    );
+    setProximityCircles(
+      normalizedType === "proximity" && center && radius > 0
+        ? [
+            {
+              id: `zone-${entry.key}-proximity`,
+              center,
+              radiusMeters: radius,
+            },
+          ]
+        : [],
+    );
+    setDynamicCircles(
+      normalizedType === "dynamic" && center && (minRadius > 0 || maxRadius > 0)
+        ? [
+            {
+              id: `zone-${entry.key}-dynamic`,
+              center,
+              radiusMeters: Math.max(maxRadius, minRadius),
+              minRadiusMeters: minRadius,
+              maxRadiusMeters: Math.max(maxRadius, minRadius),
+            },
+          ]
+        : [],
+    );
     setSaveStatus(
       entry.editable
         ? `Loaded ${zone.name ?? `zone ${savedZoneId(zone)}`}.`
@@ -1167,6 +1489,8 @@ export default function Dashboard() {
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
     setPolygons([]);
+    setProximityCircles([]);
+    setDynamicCircles([]);
     setDraftRing([]);
     setDrawingActive(false);
     setHoleParentId(null);
@@ -1180,6 +1504,8 @@ export default function Dashboard() {
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
     setPolygons([]);
+    setProximityCircles([]);
+    setDynamicCircles([]);
     setDraftRing([]);
     setDrawingActive(false);
     setHoleParentId(null);
@@ -1238,6 +1564,58 @@ export default function Dashboard() {
         .filter((v): v is SavedZonePolygonLayer => v !== null),
     [zoneEntries, activeSavedZoneKey, polygons, removedPolygonKeys],
   );
+  const helperCircles = useMemo(() => {
+    const circles: Array<{
+      key: string;
+      center: [number, number];
+      radiusMeters: number;
+      color: string;
+      fillOpacity?: number;
+      dashArray?: string;
+    }> = [];
+    if (proximityRadiusMeters > 0) {
+      circles.push(
+        ...proximityCircles.map((c) => ({
+          key: c.id,
+          center: c.center,
+          radiusMeters: c.radiusMeters,
+          color: "#06B6D4",
+          fillOpacity: 0.12,
+          dashArray: "8 6",
+        })),
+      );
+    }
+    if (dynamicCircles.length > 0) {
+      circles.push(
+        ...dynamicCircles.flatMap((c) => [
+          {
+            key: `${c.id}-min`,
+            center: c.center,
+            radiusMeters: Math.max(c.minRadiusMeters ?? 0, 0),
+            color: "#22C55E",
+            fillOpacity: 0.1,
+            dashArray: "4 6",
+          },
+          {
+            key: `${c.id}-max`,
+            center: c.center,
+            radiusMeters: Math.max(
+              c.maxRadiusMeters ?? 0,
+              c.minRadiusMeters ?? 0,
+              c.radiusMeters,
+            ),
+            color: "#16A34A",
+            fillOpacity: 0.06,
+            dashArray: "10 6",
+          },
+        ]),
+      );
+    }
+    return circles.filter((c) => c.radiusMeters > 0);
+  }, [
+    dynamicCircles,
+    proximityCircles,
+  ]);
 
   const focusH3Cell = useCallback((cellId: string) => {
     const corners = cornersFromH3Cell(cellId);
@@ -1253,8 +1631,13 @@ export default function Dashboard() {
     setMapFitBounds({ key: mapFitSeq.current, ...corners });
   }, []);
 
-  const modeBadge =
-    mapperMode === "h3" ? "H3 Select" : drawingActive ? "Drawing" : "Polygon";
+  const modeBadge = usesMapGeometry
+    ? mapperMode === "h3"
+      ? "H3 Select"
+      : drawingActive
+        ? "Drawing"
+        : "Polygon"
+    : "Config Mode";
 
   const customerSummary = useMemo(() => {
     if (!contextMenu) return { h3Hits: 0, polyHits: 0 };
@@ -1338,41 +1721,155 @@ export default function Dashboard() {
             </div>
 
             <div>
-              <p className={labelClass}>Mode</p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMapperMode("h3");
-                    setDrawingActive(false);
-                    setDraftRing([]);
-                  }}
-                  className={`rounded-md border px-3 py-2.5 text-sm font-medium transition ${
-                    mapperMode === "h3"
-                      ? "border-[#00E5D1] bg-[#00E5D1]/10 text-[#00E5D1]"
-                      : "border-slate-700/80 bg-[#151a20] text-slate-400"
-                  }`}
-                >
-                  H3
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMapperMode("polygon");
-                    setActiveTool(null);
-                  }}
-                  className={`rounded-md border px-3 py-2.5 text-sm font-medium transition ${
-                    mapperMode === "polygon"
-                      ? "border-[#00E5D1] bg-[#00E5D1]/10 text-[#00E5D1]"
-                      : "border-slate-700/80 bg-[#151a20] text-slate-400"
-                  }`}
-                >
-                  Polygon
-                </button>
-              </div>
+              <label className={labelClass} htmlFor="zone-type">
+                Zone type
+              </label>
+              <select
+                id="zone-type"
+                value={zoneType}
+                onChange={(e) => setZoneType(normalizeZoneTypeValue(e.target.value))}
+                className={`w-full rounded-md border border-slate-700/80 ${panel} px-3 py-2 text-sm text-white focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`}
+              >
+                <option value="geofence">Geofence</option>
+                <option value="warn">Warn</option>
+                <option value="alert">Alert</option>
+                <option value="restricted">Restricted</option>
+                <option value="proximity">Proximity-to-source</option>
+                <option value="dynamic">Dynamic-size</option>
+                <option value="custom_1">Communal ID</option>
+                <option value="custom_2">Government Local Code</option>
+              </select>
+              <p className="mt-1 text-[10px] text-slate-500">
+                H3/Geofence types use map drawing. Other types use config fields.
+              </p>
+              <p className="mt-1 text-[10px]" style={{ color: typeVisual.color }}>
+                Active profile: {typeVisual.label}
+              </p>
             </div>
 
-            {mapperMode === "h3" && (
+            {zoneType === "proximity" && (
+              <div>
+                <label className={labelClass} htmlFor="zone-proximity-radius">
+                  Proximity radius (meters)
+                </label>
+                <input
+                  id="zone-proximity-radius"
+                  type="number"
+                  min={1}
+                  value={proximityRadiusMeters}
+                  onChange={(e) => setProximityRadiusMeters(Number(e.target.value) || 0)}
+                  className="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white"
+                />
+              </div>
+            )}
+
+            {zoneType === "dynamic" && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className={labelClass} htmlFor="zone-dynamic-min">
+                    Min radius (m)
+                  </label>
+                  <input
+                    id="zone-dynamic-min"
+                    type="number"
+                    min={1}
+                    value={dynamicMinRadiusMeters}
+                    onChange={(e) =>
+                      setDynamicMinRadiusMeters(Number(e.target.value) || 0)
+                    }
+                    className="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass} htmlFor="zone-dynamic-max">
+                    Max radius (m)
+                  </label>
+                  <input
+                    id="zone-dynamic-max"
+                    type="number"
+                    min={1}
+                    value={dynamicMaxRadiusMeters}
+                    onChange={(e) =>
+                      setDynamicMaxRadiusMeters(Number(e.target.value) || 0)
+                    }
+                    className="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white"
+                  />
+                </div>
+              </div>
+            )}
+
+            {zoneType === "custom_1" && (
+              <div>
+                <label className={labelClass} htmlFor="zone-communal-id">
+                  Communal ID
+                </label>
+                <input
+                  id="zone-communal-id"
+                  value={communalCode}
+                  onChange={(e) => setCommunalCode(e.target.value)}
+                  placeholder="COMM-12345"
+                  className="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white"
+                />
+              </div>
+            )}
+
+            {zoneType === "custom_2" && (
+              <div>
+                <label className={labelClass} htmlFor="zone-gov-code">
+                  Government local code
+                </label>
+                <input
+                  id="zone-gov-code"
+                  value={governmentLocalCode}
+                  onChange={(e) => setGovernmentLocalCode(e.target.value)}
+                  placeholder="GOV-LOCAL-001"
+                  className="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white"
+                />
+              </div>
+            )}
+
+            {usesMapGeometry ? (
+              <div>
+                <p className={labelClass}>Mode</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapperMode("h3");
+                      setDrawingActive(false);
+                      setDraftRing([]);
+                    }}
+                    className={`rounded-md border px-3 py-2.5 text-sm font-medium transition ${
+                      mapperMode === "h3"
+                        ? "border-[#00E5D1] bg-[#00E5D1]/10 text-[#00E5D1]"
+                        : "border-slate-700/80 bg-[#151a20] text-slate-400"
+                    }`}
+                  >
+                    H3
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapperMode("polygon");
+                      setActiveTool(null);
+                    }}
+                    className={`rounded-md border px-3 py-2.5 text-sm font-medium transition ${
+                      mapperMode === "polygon"
+                        ? "border-[#00E5D1] bg-[#00E5D1]/10 text-[#00E5D1]"
+                        : "border-slate-700/80 bg-[#151a20] text-slate-400"
+                    }`}
+                  >
+                    Polygon
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[10px] text-slate-500">
+                Map drawing tools are hidden for this zone type.
+              </p>
+            )}
+
+            {usesMapGeometry && mapperMode === "h3" && (
               <div className="space-y-3 rounded-md border border-slate-700/80 bg-[#151a20]/50 p-3">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                   H3 Select settings
@@ -1409,18 +1906,6 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div>
-                  <label className={labelClass} htmlFor="h3-color">
-                    Color
-                  </label>
-                  <input
-                    id="h3-color"
-                    type="color"
-                    value={h3Color}
-                    onChange={(e) => setH3Color(e.target.value)}
-                    className="h-9 w-full cursor-pointer rounded border border-slate-600 bg-transparent"
-                  />
-                </div>
-                <div>
                   <label className={labelClass} htmlFor="h3-op">
                     Opacity ({h3OpacityPct}%)
                   </label>
@@ -1444,7 +1929,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            {mapperMode === "polygon" && (
+            {usesMapGeometry && mapperMode === "polygon" && (
               <div className="space-y-3 rounded-md border border-slate-700/80 bg-[#151a20]/50 p-3">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                   Polygon Select settings
@@ -1469,18 +1954,6 @@ export default function Dashboard() {
                 >
                   {drawingActive ? "Stop Drawing" : "Start Drawing"}
                 </button>
-                <div>
-                  <label className={labelClass} htmlFor="poly-color">
-                    Color
-                  </label>
-                  <input
-                    id="poly-color"
-                    type="color"
-                    value={polygonColor}
-                    onChange={(e) => setPolygonColor(e.target.value)}
-                    className="h-9 w-full cursor-pointer rounded border border-slate-600 bg-transparent"
-                  />
-                </div>
                 <div>
                   <label className={labelClass} htmlFor="poly-op">
                     Opacity ({polygonOpacityPct}%)
@@ -1742,35 +2215,40 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Selected H3 cells ({selectedCells.length})
-                </p>
-              </div>
-              <div className="max-h-36 overflow-y-auto rounded-md border border-slate-700/80 bg-[#0d1117] p-2">
-                {selectedCells.length === 0 ? (
-                  <p className="text-xs text-slate-500">
-                    Click the map in H3 mode to add cells at resolution{" "}
-                    {resolution}.
-                  </p>
-                ) : (
-                  <ul className="space-y-1">
-                    {selectedCells.map((id) => (
-                      <li key={id}>
-                        <button
-                          type="button"
-                          onClick={() => focusH3Cell(id)}
-                          className="w-full rounded px-2 py-1.5 text-left font-mono text-[10px] leading-snug text-[#00E5D1] transition hover:bg-[#00E5D1]/15 hover:text-white"
-                        >
-                          <span className="break-all">{id}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              {usesMapGeometry && (
+                <>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      Selected H3 cells ({selectedCells.length})
+                    </p>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto rounded-md border border-slate-700/80 bg-[#0d1117] p-2">
+                    {selectedCells.length === 0 ? (
+                      <p className="text-xs text-slate-500">
+                        Click the map in H3 mode to add cells at resolution{" "}
+                        {resolution}.
+                      </p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {selectedCells.map((id) => (
+                          <li key={id}>
+                            <button
+                              type="button"
+                              onClick={() => focusH3Cell(id)}
+                              className="w-full rounded px-2 py-1.5 text-left font-mono text-[10px] leading-snug text-[#00E5D1] transition hover:bg-[#00E5D1]/15 hover:text-white"
+                            >
+                              <span className="break-all">{id}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </>
+              )}
 
-              <div className="mt-3">
+              {usesMapGeometry && (
+                <div className="mt-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                     All working H3 cells ({allWorkingCells.length})
@@ -1797,9 +2275,11 @@ export default function Dashboard() {
                     </ul>
                   )}
                 </div>
-              </div>
+                </div>
+              )}
 
-              <div className="mt-3">
+              {usesMapGeometry && (
+                <div className="mt-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                     Polygons ({allWorkingPolygons.length})
@@ -1842,7 +2322,8 @@ export default function Dashboard() {
                     </ul>
                   )}
                 </div>
-              </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1868,7 +2349,7 @@ export default function Dashboard() {
               >
                 <Download className="h-4 w-4" strokeWidth={2} />
               </button>
-              <button
+                <button
                 type="button"
                 onClick={handleSave}
                 className="ml-auto min-w-[120px] flex-1 rounded-md bg-[#00E5D1] px-4 py-2.5 text-sm font-bold text-[#0B0E11] sm:flex-none"
@@ -1892,13 +2373,14 @@ export default function Dashboard() {
             selectedCells={selectedCells}
             savedZoneCellLayers={savedZoneCellLayers}
             savedZonePolygonLayers={savedZonePolygonLayers}
-            h3Color={h3Color}
+            helperCircles={helperCircles}
+            h3Color={effectiveH3Color}
             h3FillOpacity={h3FillOpacity}
             polygons={polygons}
-            polygonColor={polygonColor}
+            polygonColor={effectivePolygonColor}
             polygonFillOpacity={polygonFillOpacity}
             draftRing={draftRing}
-            draftLineColor={polygonColor}
+            draftLineColor={effectivePolygonColor}
             measureA={measureA}
             measureB={measureB}
             measurePreview={measurePreview}
@@ -1919,7 +2401,7 @@ export default function Dashboard() {
             interactive
           />
 
-          {drawingActive && mapperMode === "polygon" && (
+          {drawingActive && usesMapGeometry && mapperMode === "polygon" && (
             <div className="pointer-events-none absolute left-1/2 top-4 z-[500] -translate-x-1/2 rounded-md border border-amber-500/40 bg-[#0B0E11]/95 px-4 py-2 text-center text-xs text-amber-100 shadow-lg backdrop-blur">
               Drawing · near start to close ·{" "}
               <kbd className="rounded bg-white/10 px-1">Esc</kbd> undo ·{" "}
