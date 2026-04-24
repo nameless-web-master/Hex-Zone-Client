@@ -764,7 +764,14 @@ export default function Dashboard() {
   }, [user?.id]);
   const zoneEntries = useMemo<ZoneEntry[]>(
     () =>
-      zones.map((zone, idx) => {
+      [...zones]
+        .sort((a, b) =>
+          savedZoneRecordId(a).localeCompare(savedZoneRecordId(b), undefined, {
+            numeric: true,
+            sensitivity: "base",
+          }),
+        )
+        .map((zone, idx) => {
         const ownerId =
           zone.owner_id != null ? String(zone.owner_id) : null;
         const creatorId =
