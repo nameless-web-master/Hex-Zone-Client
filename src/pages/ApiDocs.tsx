@@ -259,6 +259,97 @@ const ENDPOINTS: EndpointSpec[] = [
     ],
   },
   {
+    id: "message-feature-members-location",
+    method: "POST",
+    path: "/message-feature/members/location",
+    group: "core",
+    description:
+      "Refresh dynamic zone memberships for the current JWT member before geo messaging.",
+    params: [
+      { name: "latitude", in: "body", type: "number", required: true, placeholder: "34.0522" },
+      { name: "longitude", in: "body", type: "number", required: true, placeholder: "-118.2437" },
+    ],
+  },
+  {
+    id: "message-feature-propagate",
+    method: "POST",
+    path: "/message-feature/messages/propagate",
+    group: "core",
+    description: "Send geo-aware message propagation with strict delivery accounting.",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "message-feature-ingest",
+    method: "POST",
+    path: "/message-feature/messages/ingest",
+    group: "core",
+    description:
+      "Ingest message payload using x-api-key auth (set custom header in curl editor).",
+    bodyJson: true,
+    public: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "message-feature-messages-new",
+    method: "GET",
+    path: "/message-feature/messages/new",
+    group: "core",
+    description: "Pull new message-feature messages by ISO cursor.",
+    params: [{ name: "since", in: "query", required: true, placeholder: "2026-01-01T00:00:00Z" }],
+  },
+  {
+    id: "message-feature-blocks-create",
+    method: "POST",
+    path: "/message-feature/blocks",
+    group: "core",
+    description: "Create access block by owner id or message type.",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "message-feature-blocks-list",
+    method: "GET",
+    path: "/message-feature/blocks",
+    group: "core",
+    description: "List blocks visible to the current member context.",
+    params: [],
+  },
+  {
+    id: "message-feature-blocks-delete",
+    method: "DELETE",
+    path: "/message-feature/blocks/{block_id}",
+    group: "core",
+    description: "Delete a block entry by block id.",
+    params: [{ name: "block_id", in: "path", required: true, placeholder: "block-id" }],
+  },
+  {
+    id: "message-feature-access-schedules-create",
+    method: "POST",
+    path: "/message-feature/access/schedules",
+    group: "core",
+    description: "Create expected-guest schedule and member-assist policy.",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
+    id: "message-feature-access-schedules-list",
+    method: "GET",
+    path: "/message-feature/access/schedules",
+    group: "core",
+    description: "List access schedules by zone_id query.",
+    params: [{ name: "zone_id", in: "query", required: true, placeholder: "ZONE-7A29" }],
+  },
+  {
+    id: "message-feature-access-permission",
+    method: "POST",
+    path: "/message-feature/access/permission",
+    group: "core",
+    description: "Permission decision endpoint; payload type must be PERMISSION.",
+    bodyJson: true,
+    params: [{ name: "body", in: "body", required: true, placeholder: "JSON body" }],
+  },
+  {
     id: "h3-convert",
     method: "POST",
     path: "/utils/h3/convert",
@@ -431,6 +522,53 @@ const DEFAULT_JSON: Record<string, string> = {
   "zone_id": "ZONE-7A29",
   "message": "Perimeter updated",
   "visibility": "public"
+}`,
+  "message-feature-propagate": `{
+  "type": "PANIC",
+  "hid": "DEV-A1B2C3",
+  "tt": "2026-01-01T00:00:00Z",
+  "msg": {
+    "text": "Assistance needed"
+  },
+  "position": {
+    "latitude": 34.0522,
+    "longitude": -118.2437
+  },
+  "city": "Los Angeles",
+  "province": "CA",
+  "country": "US"
+}`,
+  "message-feature-ingest": `{
+  "type": "CHAT",
+  "hid": "DEV-A1B2C3",
+  "msg": {
+    "text": "Ingested message"
+  },
+  "position": {
+    "latitude": 34.0522,
+    "longitude": -118.2437
+  }
+}`,
+  "message-feature-blocks-create": `{
+  "blocked_message_type": "PANIC"
+}`,
+  "message-feature-access-schedules-create": `{
+  "zone_id": "ZONE-7A29",
+  "guest_name": "Jordan Rivera",
+  "starts_at": "2026-01-01T00:00:00Z",
+  "ends_at": "2026-01-01T04:00:00Z",
+  "notify_member_assist": true
+}`,
+  "message-feature-access-permission": `{
+  "type": "PERMISSION",
+  "hid": "DEV-A1B2C3",
+  "msg": {
+    "guest_name": "Jordan Rivera"
+  },
+  "position": {
+    "latitude": 34.0522,
+    "longitude": -118.2437
+  }
 }`,
   "h3-convert": `{
   "latitude": 34.0522,
@@ -776,6 +914,9 @@ export default function ApiDocs() {
             <p className="mt-2 text-slate-400">
               WebSocket endpoints: <code>/ws?token=&lt;jwt&gt;</code> and{" "}
               <code>/ws/messages?token=&lt;jwt&gt;</code> (compat alias).
+              Event envelope: <code>{`{ type, data }`}</code> with{" "}
+              <code>NEW_GEO_MESSAGE</code>, <code>PERMISSION_MESSAGE</code>, and{" "}
+              <code>NEW_MESSAGE</code>.
             </p>
           </section>
           {selected && (

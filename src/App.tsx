@@ -13,6 +13,13 @@ import ApiDocs from "./pages/ApiDocs";
 import QrInvite from "./pages/QrInvite";
 import JoinWithQr from "./pages/JoinWithQr";
 import { AppStateProvider } from "./state/app/AppStateContext";
+import { useMessageFeatureBootstrap } from "./hooks/useMessageFeatureBootstrap";
+
+function MessageFeatureBootstrap() {
+  const { token } = useAuth();
+  useMessageFeatureBootstrap(token);
+  return null;
+}
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { token } = useAuth();
@@ -23,6 +30,7 @@ export default function App() {
   return (
     <AuthProvider>
       <AppStateProvider>
+        <MessageFeatureBootstrap />
         <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
           <Navbar />
           <main className="mx-auto max-w-7xl px-5 pt-28 flex-1">

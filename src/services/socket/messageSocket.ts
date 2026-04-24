@@ -1,12 +1,28 @@
 import { API_BASE_URL } from "../api/client";
 import type { Message } from "../api/messages";
+import type {
+  MessageFeaturePermissionDecision,
+  MessageFeaturePropagationResponse,
+} from "../api/messageFeature";
 
 type IncomingNewMessage = {
   type: "NEW_MESSAGE";
   data: Message;
 };
 
-type SocketEvent = IncomingNewMessage | { type: string; data?: unknown };
+type MessageFeatureEnvelopeType =
+  | "NEW_GEO_MESSAGE"
+  | "PERMISSION_MESSAGE"
+  | "NEW_MESSAGE";
+
+export type MessageFeatureSocketEvent =
+  | IncomingNewMessage
+  | { type: "NEW_GEO_MESSAGE"; data: MessageFeaturePropagationResponse }
+  | { type: "PERMISSION_MESSAGE"; data: MessageFeaturePermissionDecision };
+
+type SocketEvent =
+  | MessageFeatureSocketEvent
+  | { type: MessageFeatureEnvelopeType | string; data?: unknown };
 
 function isMessage(value: unknown): value is Message {
   if (!value || typeof value !== "object") return false;
@@ -19,6 +35,41 @@ function isMessage(value: unknown): value is Message {
     (row.visibility === "public" || row.visibility === "private") &&
     typeof row.message === "string" &&
     typeof row.created_at === "string"
+  );
+}
+
+function isPropagationResponse(
+  value: unknown,
+): value is MessageFeaturePropagationResponse {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    row.id != null &&
+    typeof row.type === "string" &&
+    Array.isArray(row.zone_ids) &&
+    Array.isArray(row.delivered_owner_ids) &&
+    Array.isArray(row.blocked_owner_ids) &&
+    typeof row.created_at === "string"
+  );
+}
+
+function isPermissionDecision(
+  value: unknown,
+): value is MessageFeaturePermissionDecision {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  const sender = row.sender_message as Record<string, unknown> | undefined;
+  const member = row.member_message as Record<string, unknown> | undefined;
+  return (
+    (row.decision === "EXPECTED_GUEST" || row.decision === "NOT_EXPECTED_GUEST") &&
+    typeof row.schedule_match === "boolean" &&
+    Array.isArray(row.delivered_owner_ids) &&
+    sender != null &&
+    typeof sender.code === "string" &&
+    typeof sender.text === "string" &&
+    member != null &&
+    typeof member.code === "string" &&
+    typeof member.text === "string"
   );
 }
 
@@ -39,10 +90,27 @@ export function defaultRealtimeWsBase(): string {
 
 /** Parse a text frame from the realtime API; returns null if not a NEW_MESSAGE. */
 export function parseMessageSocketPayload(raw: string): Message | null {
+  const event = parseMessageFeatureSocketEvent(raw);
+  if (event?.type === "NEW_MESSAGE") {
+    return event.data;
+  }
+  return null;
+}
+
+/** Parse message-feature envelope events and keep NEW_MESSAGE backward compatible. */
+export function parseMessageFeatureSocketEvent(
+  raw: string,
+): MessageFeatureSocketEvent | null {
   try {
     const parsed = JSON.parse(raw) as SocketEvent;
     if (parsed.type === "NEW_MESSAGE" && isMessage(parsed.data)) {
-      return parsed.data;
+      return { type: "NEW_MESSAGE", data: parsed.data };
+    }
+    if (parsed.type === "NEW_GEO_MESSAGE" && isPropagationResponse(parsed.data)) {
+      return { type: "NEW_GEO_MESSAGE", data: parsed.data };
+    }
+    if (parsed.type === "PERMISSION_MESSAGE" && isPermissionDecision(parsed.data)) {
+      return { type: "PERMISSION_MESSAGE", data: parsed.data };
     }
   } catch {
     /* ignore */
