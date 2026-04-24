@@ -867,6 +867,7 @@ export default function Dashboard() {
       chosen.zone.config && typeof chosen.zone.config === "object"
         ? chosen.zone.config
         : {};
+    setZoneType(normalizedType);
     setActiveSavedZoneKey(chosen.key);
     setActiveSavedZoneEditable(chosen.editable);
     setSelectedCells(
@@ -1553,6 +1554,7 @@ export default function Dashboard() {
     const zone = entry.zone;
     const normalizedType = normalizeZoneTypeValue(zone.type ?? zone.zone_type);
     setIsCreatingNewZone(false);
+    setZoneType(normalizedType);
     setActiveSavedZoneKey(entry.key);
     setActiveSavedZoneEditable(entry.editable);
     setSelectedCells(Array.isArray(zone.h3_cells) ? [...zone.h3_cells] : []);
@@ -1693,31 +1695,93 @@ export default function Dashboard() {
       fillOpacity?: number;
       dashArray?: string;
     }> = [];
-    if (proximityRadiusMeters > 0) {
+    zoneEntries.forEach((entry) => {
+      const active = activeSavedZoneKey != null && entry.key === activeSavedZoneKey;
+      const normalizedType = active
+        ? zoneType
+        : normalizeZoneTypeValue(entry.zone.type ?? entry.zone.zone_type);
+
+      if (normalizedType === "proximity") {
+        const zoneCircles = active
+          ? proximityCircles
+          : parseCircleDraftsFromZone(entry.zone, "proximity", {
+              proximityRadiusMeters: 500,
+              dynamicMinRadiusMeters: 200,
+              dynamicMaxRadiusMeters: 1000,
+            });
+        circles.push(
+          ...zoneCircles.map((c, idx) => ({
+            key: `p-${entry.key}-${c.id}-${idx}`,
+            center: c.center,
+            radiusMeters: c.radiusMeters,
+            color: "#06B6D4",
+            fillOpacity: active ? 0.18 : 0.1,
+            dashArray: "8 6",
+          })),
+        );
+      }
+
+      if (normalizedType === "dynamic") {
+        const zoneCircles = active
+          ? dynamicCircles
+          : parseCircleDraftsFromZone(entry.zone, "dynamic", {
+              proximityRadiusMeters: 500,
+              dynamicMinRadiusMeters: 200,
+              dynamicMaxRadiusMeters: 1000,
+            });
+        circles.push(
+          ...zoneCircles.flatMap((c, idx) => [
+            {
+              key: `dmin-${entry.key}-${c.id}-${idx}`,
+              center: c.center,
+              radiusMeters: Math.max(c.minRadiusMeters ?? 0, 0),
+              color: "#22C55E",
+              fillOpacity: active ? 0.16 : 0.1,
+              dashArray: "4 6",
+            },
+            {
+              key: `dmax-${entry.key}-${c.id}-${idx}`,
+              center: c.center,
+              radiusMeters: Math.max(
+                c.maxRadiusMeters ?? 0,
+                c.minRadiusMeters ?? 0,
+                c.radiusMeters,
+              ),
+              color: "#16A34A",
+              fillOpacity: active ? 0.1 : 0.06,
+              dashArray: "10 6",
+            },
+          ]),
+        );
+      }
+    });
+
+    // Keep unsaved new-zone circles visible even without a selected saved zone.
+    if (isCreatingNewZone && zoneType === "proximity") {
       circles.push(
-        ...proximityCircles.map((c) => ({
-          key: c.id,
+        ...proximityCircles.map((c, idx) => ({
+          key: `draft-p-${c.id}-${idx}`,
           center: c.center,
           radiusMeters: c.radiusMeters,
           color: "#06B6D4",
-          fillOpacity: 0.12,
+          fillOpacity: 0.18,
           dashArray: "8 6",
         })),
       );
     }
-    if (dynamicCircles.length > 0) {
+    if (isCreatingNewZone && zoneType === "dynamic") {
       circles.push(
-        ...dynamicCircles.flatMap((c) => [
+        ...dynamicCircles.flatMap((c, idx) => [
           {
-            key: `${c.id}-min`,
+            key: `draft-dmin-${c.id}-${idx}`,
             center: c.center,
             radiusMeters: Math.max(c.minRadiusMeters ?? 0, 0),
             color: "#22C55E",
-            fillOpacity: 0.1,
+            fillOpacity: 0.16,
             dashArray: "4 6",
           },
           {
-            key: `${c.id}-max`,
+            key: `draft-dmax-${c.id}-${idx}`,
             center: c.center,
             radiusMeters: Math.max(
               c.maxRadiusMeters ?? 0,
@@ -1725,7 +1789,7 @@ export default function Dashboard() {
               c.radiusMeters,
             ),
             color: "#16A34A",
-            fillOpacity: 0.06,
+            fillOpacity: 0.1,
             dashArray: "10 6",
           },
         ]),
@@ -1733,6 +1797,10 @@ export default function Dashboard() {
     }
     return circles.filter((c) => c.radiusMeters > 0);
   }, [
+    zoneEntries,
+    activeSavedZoneKey,
+    isCreatingNewZone,
+    zoneType,
     dynamicCircles,
     proximityCircles,
   ]);
