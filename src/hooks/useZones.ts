@@ -15,6 +15,23 @@ export type SavedZone = {
   geo_fence?: [number, number][];
   geo_fence_polygon?: unknown;
   polygons?: unknown;
+  can_edit?: boolean;
+};
+
+export type ZonesCapabilities = {
+  can_create_zone: boolean;
+  can_edit_active_zone?: boolean;
+  remaining_total?: number;
+  remaining_for_role?: number;
+  remaining_for_current_user_role?: number;
+  role?: "administrator" | "standard" | string;
+  reason?: string;
+  max_total?: number;
+};
+
+type ZonesPayload = {
+  data: SavedZone[];
+  capabilities: ZonesCapabilities | null;
 };
 
 function getZoneId(zone: SavedZone): number | string {
@@ -118,6 +135,12 @@ function normalizeSavedZone(raw: unknown): SavedZone | null {
     geo_fence: asGeoFence(rawGeoFence),
     geo_fence_polygon: rawPolygon,
     polygons: row.polygons,
+    can_edit:
+      typeof row.can_edit === "boolean"
+        ? row.can_edit
+        : typeof row.canEdit === "boolean"
+          ? row.canEdit
+          : undefined,
   };
 }
 
@@ -133,43 +156,68 @@ function normalizeZoneList(value: unknown): SavedZone[] {
   return [];
 }
 
-async function fetchAccountZones(ownerZoneId: number | string): Promise<SavedZone[]> {
-  const primary = await request<unknown[]>({ method: "GET", url: "/zones" });
-  const primaryZones = normalizeZoneList(primary.data);
-  if (primaryZones.length > 0) return primaryZones;
+function normalizeCapabilities(value: unknown): ZonesCapabilities | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const canCreate = row.can_create_zone;
+  if (typeof canCreate !== "boolean") return null;
+  return {
+    can_create_zone: canCreate,
+    can_edit_active_zone:
+      typeof row.can_edit_active_zone === "boolean"
+        ? row.can_edit_active_zone
+        : undefined,
+    remaining_total:
+      typeof row.remaining_total === "number" ? row.remaining_total : undefined,
+    remaining_for_role:
+      typeof row.remaining_for_role === "number" ? row.remaining_for_role : undefined,
+    remaining_for_current_user_role:
+      typeof row.remaining_for_current_user_role === "number"
+        ? row.remaining_for_current_user_role
+        : typeof row.remaining_for_role === "number"
+          ? row.remaining_for_role
+          : undefined,
+    role: typeof row.role === "string" ? row.role : undefined,
+    reason: typeof row.reason === "string" ? row.reason : undefined,
+    max_total: typeof row.max_total === "number" ? row.max_total : undefined,
+  };
+}
+
+function normalizeZonesPayload(value: unknown): ZonesPayload {
+  if (Array.isArray(value)) {
+    return { data: normalizeZoneList(value), capabilities: null };
+  }
+  if (value && typeof value === "object" && "data" in value) {
+    const row = value as { data?: unknown; capabilities?: unknown };
+    const capabilities = normalizeCapabilities(row.capabilities);
+    if (Array.isArray(row.data)) {
+      return { data: normalizeZoneList(row.data), capabilities };
+    }
+    if (row.data && typeof row.data === "object") {
+      const inner = row.data as { data?: unknown; capabilities?: unknown };
+      return {
+        data: normalizeZoneList(inner.data),
+        capabilities: capabilities ?? normalizeCapabilities(inner.capabilities),
+      };
+    }
+    console.warn("Unexpected zones payload shape from API", row);
+    return { data: [], capabilities };
+  }
+  return { data: [], capabilities: null };
+}
+
+async function fetchAccountZones(ownerZoneId: number | string): Promise<ZonesPayload> {
+  const primary = await request<unknown>({ method: "GET", url: "/zones" });
+  const primaryPayload = normalizeZonesPayload(primary.data);
+  if (primaryPayload.data.length > 0 || primaryPayload.capabilities) {
+    return primaryPayload;
+  }
   const alt = await request<unknown[]>({
     method: "GET",
     url: "/zones/",
     params: { zone_id: ownerZoneId },
   });
-  return normalizeZoneList(alt.data);
-}
-
-function filterZonesForScope(
-  zones: SavedZone[],
-  scope: {
-    role?: string | null;
-    currentUserId?: string | null;
-    accountOwnerId?: string | null;
-    ownerZoneId?: string | null;
-  },
-): SavedZone[] {
-  const role = String(scope.role ?? "").toLowerCase();
-  if (role === "administrator") return zones;
-  const currentUserId = String(scope.currentUserId ?? "");
-  const accountOwnerId = String(scope.accountOwnerId ?? "");
-  const ownerZoneId = String(scope.ownerZoneId ?? "");
-  return zones.filter((zone) => {
-    const ownerId = String(zone.owner_id ?? "");
-    const creatorId = String(zone.creator_id ?? "");
-    const zoneId = String(zone.zone_id ?? zone.id ?? "");
-    return (
-      (!!currentUserId && creatorId === currentUserId) ||
-      (!!currentUserId && ownerId === currentUserId) ||
-      (!!accountOwnerId && ownerId === accountOwnerId) ||
-      (!!ownerZoneId && zoneId === ownerZoneId)
-    );
-  });
+  return normalizeZonesPayload(alt.data);
 }
 
 export function useZones(
@@ -183,6 +231,7 @@ export function useZones(
   const [zones, setZones] = useState<SavedZone[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<ZonesCapabilities | null>(null);
 
   const refresh = useCallback(async () => {
     if (ownerZoneId == null || ownerZoneId === "") {
@@ -193,15 +242,9 @@ export function useZones(
     setLoading(true);
     setError(null);
     try {
-      const allZones = await fetchAccountZones(ownerZoneId);
-      setZones(
-        filterZonesForScope(allZones, {
-          role: scope?.role,
-          currentUserId: scope?.currentUserId,
-          accountOwnerId: scope?.accountOwnerId,
-          ownerZoneId: String(ownerZoneId),
-        }),
-      );
+      const payload = await fetchAccountZones(ownerZoneId);
+      setZones(payload.data);
+      setCapabilities(payload.capabilities);
     } catch {
       setError("Could not load saved zones.");
     } finally {
@@ -234,14 +277,14 @@ export function useZones(
         throw new Error("Missing owner zone id");
       }
 
-      const ownerZones = await fetchAccountZones(ownerZoneId);
+      const ownerZones = (await fetchAccountZones(ownerZoneId)).data;
 
       const incomingCells = asCellList(payload.h3_cells);
       const incomingSet = new Set(incomingCells);
       const seenIncomingInPrevious = new Set<string>();
 
       const updates = ownerZones
-        .map((zone) => {
+        .map((zone: SavedZone) => {
           const oldCells = asCellList(zone.h3_cells);
           const nextCells = oldCells.filter((c) => incomingSet.has(c));
           const changed =
@@ -254,10 +297,11 @@ export function useZones(
 
           return { zone, nextCells, changed };
         })
-        .filter((u) => u.changed);
+        .filter((u: { changed: boolean }) => u.changed);
 
       await Promise.all(
-        updates.map(({ zone, nextCells }) => {
+        updates.map(
+          ({ zone, nextCells }: { zone: SavedZone; nextCells: string[] }) => {
           const z = zone as Record<string, unknown>;
           const { id, ...rest } = z;
           return request<SavedZone>({
@@ -268,7 +312,8 @@ export function useZones(
               h3_cells: nextCells,
             },
           });
-        }),
+          },
+        ),
       );
 
       const dedupedIncoming = Array.from(new Set(incomingCells));
@@ -321,6 +366,7 @@ export function useZones(
 
   return {
     zones,
+    capabilities,
     loading,
     error,
     refresh,

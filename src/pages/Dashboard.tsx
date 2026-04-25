@@ -8,13 +8,12 @@ import HexMapperMap, {
   type SavedZoneCellLayer,
   type SavedZonePolygonLayer,
 } from "../components/HexMapperMap";
-import {
-  DashboardTabs,
-  type DashboardTab,
-} from "../components/dashboard/DashboardTabs";
 import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
 import { useAuth } from "../hooks/useAuth";
-import { useZones, type SavedZone } from "../hooks/useZones";
+import {
+  useZones,
+  type SavedZone,
+} from "../hooks/useZones";
 import {
   getCellFromCoords,
   h3ToPolygon,
@@ -491,6 +490,8 @@ type ZoneEntry = {
   editable: boolean;
 };
 
+const MAX_ZONE_NAME_LENGTH = 120;
+
 type DraftCircle = {
   id: string;
   center: [number, number];
@@ -686,7 +687,7 @@ export default function Dashboard() {
   }, [user]);
 
   const zoneId = useMemo(() => String(userZoneId ?? ""), [userZoneId]);
-  const [zoneName] = useState("Operations Zone");
+  const [zoneName, setZoneName] = useState("");
   const [description] = useState("Zone from dashboard console.");
   const [zoneType, setZoneType] = useState<ZoneTypeMode>("geofence");
   const [proximityRadiusMeters, setProximityRadiusMeters] = useState(500);
@@ -737,6 +738,7 @@ export default function Dashboard() {
     null,
   );
   const [isCreatingNewZone, setIsCreatingNewZone] = useState(false);
+  const [showAllZones, setShowAllZones] = useState(false);
   const [activeSavedZoneEditable, setActiveSavedZoneEditable] =
     useState<boolean>(false);
   const [removedCellIds, setRemovedCellIds] = useState<Set<string>>(
@@ -747,6 +749,7 @@ export default function Dashboard() {
   );
   const {
     zones,
+    capabilities,
     loading: loadingZones,
     error: zonesError,
     saveZone,
@@ -777,8 +780,10 @@ export default function Dashboard() {
         const creatorId =
           zone.creator_id != null ? String(zone.creator_id) : null;
         const editable =
-          (creatorId != null && creatorId === currentUserId) ||
-          (creatorId == null && ownerId != null && ownerId === currentUserId);
+          typeof zone.can_edit === "boolean"
+            ? zone.can_edit
+            : (creatorId != null && creatorId === currentUserId) ||
+              (creatorId == null && ownerId != null && ownerId === currentUserId);
         return {
           zone,
           key: `${savedZoneRecordId(zone)}:${ownerId ?? "none"}:${idx}`,
@@ -793,6 +798,10 @@ export default function Dashboard() {
     () => zoneEntries.find((entry) => entry.key === activeSavedZoneKey) ?? null,
     [zoneEntries, activeSavedZoneKey],
   );
+  const canCreateZone = capabilities?.can_create_zone ?? true;
+  const createBlockedReason =
+    capabilities?.reason ??
+    (canCreateZone ? "" : "You have reached your allowed zone limit.");
   const canEditCurrentSelection =
     isCreatingNewZone || (!!activeZoneEntry && activeSavedZoneEditable);
   const usesMapGeometry = zoneType === "geofence";
@@ -863,13 +872,12 @@ export default function Dashboard() {
     const normalizedType = normalizeZoneTypeValue(
       chosen.zone.type ?? chosen.zone.zone_type,
     );
-    const chosenConfig =
-      chosen.zone.config && typeof chosen.zone.config === "object"
-        ? chosen.zone.config
-        : {};
     setZoneType(normalizedType);
+    setZoneName((chosen.zone.name ?? "").trim());
     setActiveSavedZoneKey(chosen.key);
-    setActiveSavedZoneEditable(chosen.editable);
+    setActiveSavedZoneEditable(
+      chosen.editable && (capabilities?.can_edit_active_zone ?? true),
+    );
     setSelectedCells(
       Array.isArray(chosen.zone.h3_cells) ? [...chosen.zone.h3_cells] : [],
     );
@@ -894,7 +902,7 @@ export default function Dashboard() {
           })
         : [],
     );
-  }, [zoneEntries, activeSavedZoneKey, isCreatingNewZone]);
+  }, [zoneEntries, activeSavedZoneKey, isCreatingNewZone, capabilities?.can_edit_active_zone]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -1405,6 +1413,19 @@ export default function Dashboard() {
       setSaveStatus("Selected zone is read-only. Choose one of your own zones to edit.");
       return;
     }
+    if (isCreatingNewZone && !canCreateZone) {
+      setSaveStatus(createBlockedReason || "You cannot create more zones.");
+      return;
+    }
+    const normalizedZoneName = zoneName.trim();
+    if (!normalizedZoneName) {
+      setSaveStatus("Zone name is required.");
+      return;
+    }
+    if (normalizedZoneName.length > MAX_ZONE_NAME_LENGTH) {
+      setSaveStatus(`Zone name must be ${MAX_ZONE_NAME_LENGTH} characters or less.`);
+      return;
+    }
     const canSaveGeometry =
       allWorkingCells.length > 0 || allWorkingPolygons.length > 0;
     const canSaveByType =
@@ -1521,7 +1542,7 @@ export default function Dashboard() {
       };
       const payload = {
         // zone_id: zoneId,
-        name: zoneName,
+        name: normalizedZoneName,
         description,
         zone_type: compatibilityZoneType,
         type: zoneType,
@@ -1542,11 +1563,28 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error(err);
-      setSaveStatus(
+      const message =
         err instanceof Error
           ? err.message
-          : "Save failed. Check your session and try again.",
-      );
+          : "Save failed. Check your session and try again.";
+      const lower = message.toLowerCase();
+      if (lower.includes("quota") || lower.includes("limit")) {
+        setSaveStatus(`Quota limit: ${message}`);
+        return;
+      }
+      if (
+        lower.includes("forbidden") ||
+        lower.includes("unauthorized") ||
+        lower.includes("permission")
+      ) {
+        setSaveStatus(`Permission error: ${message}`);
+        return;
+      }
+      if (lower.includes("network") || lower.includes("timeout")) {
+        setSaveStatus(`Network error: ${message}`);
+        return;
+      }
+      setSaveStatus(message);
     }
   };
 
@@ -1555,8 +1593,11 @@ export default function Dashboard() {
     const normalizedType = normalizeZoneTypeValue(zone.type ?? zone.zone_type);
     setIsCreatingNewZone(false);
     setZoneType(normalizedType);
+    setZoneName((zone.name ?? "").trim());
     setActiveSavedZoneKey(entry.key);
-    setActiveSavedZoneEditable(entry.editable);
+    setActiveSavedZoneEditable(
+      entry.editable && (capabilities?.can_edit_active_zone ?? true),
+    );
     setSelectedCells(Array.isArray(zone.h3_cells) ? [...zone.h3_cells] : []);
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
@@ -1585,6 +1626,7 @@ export default function Dashboard() {
         : `Loaded ${zone.name ?? `zone ${savedZoneId(zone)}`} (read-only).`,
     );
   }, [
+    capabilities?.can_edit_active_zone,
     dynamicMaxRadiusMeters,
     dynamicMinRadiusMeters,
     proximityRadiusMeters,
@@ -1604,7 +1646,12 @@ export default function Dashboard() {
   };
 
   const startNewZoneDraft = useCallback(() => {
+    if (!canCreateZone) {
+      setSaveStatus(createBlockedReason || "You cannot create more zones.");
+      return;
+    }
     setIsCreatingNewZone(true);
+    setZoneName("");
     setActiveSavedZoneKey(null);
     setActiveSavedZoneEditable(true);
     setSelectedCells([]);
@@ -1617,11 +1664,12 @@ export default function Dashboard() {
     setDrawingActive(false);
     setHoleParentId(null);
     setSaveStatus("New zone mode: draw cells/polygons, then Save zone.");
-  }, []);
+  }, [canCreateZone, createBlockedReason]);
 
   const cancelNewZoneDraft = useCallback(() => {
     if (!isCreatingNewZone) return;
     setIsCreatingNewZone(false);
+    setZoneName(activeZoneEntry?.zone.name?.trim() ?? "");
     setSelectedCells([]);
     setRemovedCellIds(new Set());
     setRemovedPolygonKeys(new Set());
@@ -1632,7 +1680,7 @@ export default function Dashboard() {
     setDrawingActive(false);
     setHoleParentId(null);
     setSaveStatus("New zone creation canceled.");
-  }, [isCreatingNewZone]);
+  }, [activeZoneEntry?.zone.name, isCreatingNewZone]);
 
   const totalPolyAreaKm2 = useMemo(
     () => allWorkingPolygons.reduce((s, p) => s + geoPolygonAreaKm2(p), 0),
@@ -1644,6 +1692,7 @@ export default function Dashboard() {
       zoneEntries
         .map((entry) => {
           const active = activeSavedZoneKey != null && entry.key === activeSavedZoneKey;
+          if (!showAllZones && !active) return null;
           const cells = active
             ? selectedCells.filter((c) => !removedCellIds.has(c))
             : Array.isArray(entry.zone.h3_cells)
@@ -1662,7 +1711,7 @@ export default function Dashboard() {
           } satisfies SavedZoneCellLayer;
         })
         .filter((v): v is SavedZoneCellLayer => v !== null),
-    [zoneEntries, activeSavedZoneKey, selectedCells, removedCellIds],
+    [zoneEntries, activeSavedZoneKey, selectedCells, removedCellIds, showAllZones],
   );
 
   const savedZonePolygonLayers = useMemo<SavedZonePolygonLayer[]>(
@@ -1670,6 +1719,7 @@ export default function Dashboard() {
       zoneEntries
         .map((entry) => {
           const active = activeSavedZoneKey != null && entry.key === activeSavedZoneKey;
+          if (!showAllZones && !active) return null;
           const zonePolys = active ? polygons : zoneToPolygons(entry.zone);
           const filtered = zonePolys.filter(
             (p) => !removedPolygonKeys.has(polygonKey(p)),
@@ -1684,7 +1734,7 @@ export default function Dashboard() {
           } satisfies SavedZonePolygonLayer;
         })
         .filter((v): v is SavedZonePolygonLayer => v !== null),
-    [zoneEntries, activeSavedZoneKey, polygons, removedPolygonKeys],
+    [zoneEntries, activeSavedZoneKey, polygons, removedPolygonKeys, showAllZones],
   );
   const helperCircles = useMemo(() => {
     const circles: Array<{
@@ -1697,6 +1747,7 @@ export default function Dashboard() {
     }> = [];
     zoneEntries.forEach((entry) => {
       const active = activeSavedZoneKey != null && entry.key === activeSavedZoneKey;
+      if (!showAllZones && !active) return;
       const normalizedType = active
         ? zoneType
         : normalizeZoneTypeValue(entry.zone.type ?? entry.zone.zone_type);
@@ -1799,6 +1850,7 @@ export default function Dashboard() {
   }, [
     zoneEntries,
     activeSavedZoneKey,
+    showAllZones,
     isCreatingNewZone,
     zoneType,
     dynamicCircles,
@@ -1906,6 +1958,23 @@ export default function Dashboard() {
                   <Copy className="h-4 w-4" strokeWidth={2} />
                 </button>
               </div>
+            </div>
+
+            <div>
+              <label className={labelClass} htmlFor="zone-name">
+                Zone name
+              </label>
+              <input
+                id="zone-name"
+                value={zoneName}
+                onChange={(e) => setZoneName(e.target.value)}
+                maxLength={MAX_ZONE_NAME_LENGTH}
+                placeholder="Enter zone name"
+                className={`w-full rounded-md border border-slate-700/80 ${panel} px-3 py-2 text-sm text-white focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`}
+              />
+              <p className="mt-1 text-[10px] text-slate-500">
+                Required. Max {MAX_ZONE_NAME_LENGTH} characters.
+              </p>
             </div>
 
             <div>
@@ -2253,6 +2322,15 @@ export default function Dashboard() {
                 </div>
               )}
               <label className="flex cursor-pointer items-center justify-between gap-2 text-sm text-slate-300">
+                <span>Show all zones</span>
+                <input
+                  type="checkbox"
+                  checked={showAllZones}
+                  onChange={(e) => setShowAllZones(e.target.checked)}
+                  className="accent-[#00E5D1]"
+                />
+              </label>
+              <label className="flex cursor-pointer items-center justify-between gap-2 text-sm text-slate-300">
                 <span>Grayscale map</span>
                 <input
                   type="checkbox"
@@ -2313,24 +2391,12 @@ export default function Dashboard() {
               <div className="mb-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                    Saved zones ({zones.length})
+                    Zones ({zones.length})
                   </p>
                   <div className="flex items-center gap-2">
                     {loadingZones && (
                       <span className="text-[10px] text-slate-500">Loading…</span>
                     )}
-                    <button
-                      type="button"
-                      onClick={startNewZoneDraft}
-                      disabled={isCreatingNewZone}
-                      className={`rounded border px-2 py-1 text-[10px] uppercase tracking-[0.12em] transition ${
-                        isCreatingNewZone
-                          ? "border-[#00E5D1] bg-[#00E5D1]/15 text-[#00E5D1]"
-                          : "border-slate-700/80 text-slate-300 hover:border-[#00E5D1]/50 hover:text-[#00E5D1]"
-                      }`}
-                    >
-                      {isCreatingNewZone ? "Creating..." : "Create new zone"}
-                    </button>
                     {isCreatingNewZone && (
                       <button
                         type="button"
@@ -2342,24 +2408,21 @@ export default function Dashboard() {
                     )}
                   </div>
                 </div>
-                <div className="max-h-36 overflow-y-auto rounded-md border border-slate-700/80 bg-[#0d1117] p-2">
+                <div className="rounded-md border border-slate-700/80 bg-[#0d1117] p-2">
                   {zonesError ? (
                     <p className="text-xs text-red-300">{zonesError}</p>
-                  ) : zones.length === 0 ? (
-                    <p className="text-xs text-slate-500">
-                      No saved zones for this account yet.
-                    </p>
                   ) : (
-                    <ul className="space-y-1">
-                      {zoneEntries.map((entry, idx) => {
-                        const zone = entry.zone;
-                        const isActive =
-                          !isCreatingNewZone &&
-                          activeSavedZoneKey != null &&
-                          activeSavedZoneKey === entry.key;
-                        return (
-                          <li key={entry.key}>
+                    <>
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        {zoneEntries.map((entry) => {
+                          const zone = entry.zone;
+                          const isActive =
+                            !isCreatingNewZone &&
+                            activeSavedZoneKey != null &&
+                            activeSavedZoneKey === entry.key;
+                          return (
                             <button
+                              key={entry.key}
                               type="button"
                               onClick={() => {
                                 loadSavedZone(entry);
@@ -2370,32 +2433,49 @@ export default function Dashboard() {
                                 const focusPoly = zoneToPolygons(zone)[0];
                                 if (!focusCell && focusPoly) focusPolygonShape(focusPoly);
                               }}
-                              className={`w-full rounded px-2 py-1.5 text-left text-[10px] leading-snug transition ${
+                              className={`shrink-0 rounded-md border px-2.5 py-1.5 text-xs transition ${
                                 isActive
-                                  ? "bg-[#00E5D1]/20 text-white"
-                                  : entry.editable
-                                    ? "text-[#00E5D1] hover:bg-[#00E5D1]/15 hover:text-white"
-                                    : "text-slate-400 hover:bg-slate-700/20"
+                                  ? "border-[#00E5D1] bg-[#00E5D1]/20 text-white"
+                                  : "border-slate-700/80 text-slate-300 hover:border-[#00E5D1]/60"
                               }`}
                             >
-                              <div className="flex items-baseline gap-2 font-mono">
-                                <span className="shrink-0 text-slate-500">
-                                  #{idx + 1}
+                              <span>{zone.name || `Zone ${savedZoneId(zone)}`}</span>
+                              {!entry.editable && (
+                                <span className="ml-2 text-[10px] uppercase text-slate-500">
+                                  read-only
                                 </span>
-                                <span className="min-w-0 break-all">
-                                  {zone.name || `Zone ${savedZoneId(zone)}`}
-                                </span>
-                                {!entry.editable && (
-                                  <span className="shrink-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">
-                                    read-only
-                                  </span>
-                                )}
-                              </div>
+                              )}
                             </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={startNewZoneDraft}
+                          disabled={isCreatingNewZone || !canCreateZone}
+                          className={`shrink-0 rounded-md border px-2.5 py-1.5 text-xs transition ${
+                            isCreatingNewZone
+                              ? "border-[#00E5D1] bg-[#00E5D1]/15 text-[#00E5D1]"
+                              : !canCreateZone
+                                ? "cursor-not-allowed border-slate-700/80 text-slate-500"
+                                : "border-slate-700/80 text-slate-200 hover:border-[#00E5D1]/60"
+                          }`}
+                        >
+                          + New zone
+                        </button>
+                      </div>
+                      {zones.length === 0 && !isCreatingNewZone && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          {canCreateZone
+                            ? "No saved zones yet. Use + New zone to create your first zone."
+                            : createBlockedReason || "No editable zones are currently available."}
+                        </p>
+                      )}
+                      {!canCreateZone && (
+                        <p className="mt-2 text-xs text-amber-300">
+                          {createBlockedReason || "You cannot create more zones."}
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
