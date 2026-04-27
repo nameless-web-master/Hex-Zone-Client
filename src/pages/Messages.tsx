@@ -7,21 +7,29 @@ import { sendMessage, type MessageVisibility } from "../services/api/messages";
 import { getOwners, type OwnerListItem } from "../services/api/auth";
 import { getZones } from "../services/api/zones";
 import { useAuth } from "../hooks/useAuth";
+import {
+  getMessageTypeCategory,
+  getMessageScopeForType,
+  groupMessageTypesForUI,
+  isPrivateMessageType,
+  toMessageTypeLabel,
+  type MessageCategory,
+  type MessageType,
+} from "../lib/messageTypes";
 
 export default function Messages() {
   const { user } = useAuth();
   const userZoneId = user?.zoneId ?? user?.zone_id;
   const ownerId = Number(user?.id);
   const [zoneFilter, setZoneFilter] = useState("all");
-  const [visibilityFilter, setVisibilityFilter] = useState<
-    "all" | MessageVisibility
-  >("all");
+  const [scopeFilter, setScopeFilter] = useState<"all" | MessageVisibility>("all");
+  const [categoryFilter, setCategoryFilter] = useState<"all" | MessageCategory>("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | MessageType>("all");
   const [dateFilter, setDateFilter] = useState("");
   const [search, setSearch] = useState("");
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
 
-  const [composeVisibility, setComposeVisibility] =
-    useState<MessageVisibility>("public");
+  const [composeType, setComposeType] = useState<MessageType>("SERVICE");
   const [composeReceiverId, setComposeReceiverId] = useState("");
   const [composeText, setComposeText] = useState("");
   const [composeStatus, setComposeStatus] = useState("");
@@ -105,10 +113,13 @@ export default function Messages() {
   const filteredMessages = useMemo(() => {
     return messages.filter((message) => {
       if (zoneFilter !== "all" && message.zone_id !== zoneFilter) return false;
-      if (
-        visibilityFilter !== "all" &&
-        message.visibility !== visibilityFilter
-      ) {
+      if (scopeFilter !== "all" && message.scope !== scopeFilter) {
+        return false;
+      }
+      if (categoryFilter !== "all" && message.category !== categoryFilter) {
+        return false;
+      }
+      if (typeFilter !== "all" && message.type !== typeFilter) {
         return false;
       }
       if (dateFilter) {
@@ -124,39 +135,45 @@ export default function Messages() {
         String(message.receiver_id ?? "").includes(q)
       );
     });
-  }, [messages, zoneFilter, visibilityFilter, dateFilter, search]);
+  }, [messages, zoneFilter, scopeFilter, categoryFilter, typeFilter, dateFilter, search]);
 
   const activeMessage =
     filteredMessages.find((msg) => msg.id === activeMessageId) ?? null;
 
   const handleSend = async () => {
+    if (!composeType) {
+      setComposeStatus("Message Type is required.");
+      return;
+    }
     if (!composeText.trim()) return;
-    if (composeVisibility === "private" && !composeReceiverId) {
+    if (isPrivateMessageType(composeType) && !composeReceiverId) {
       setComposeStatus("Receiver ID is required for private messages.");
       return;
     }
     const parsedReceiverId = Number(composeReceiverId);
-    if (
-      composeVisibility === "private" &&
-      (!Number.isFinite(parsedReceiverId) || parsedReceiverId <= 0)
-    ) {
+    if (isPrivateMessageType(composeType) && (!Number.isFinite(parsedReceiverId) || parsedReceiverId <= 0)) {
       setComposeStatus("Receiver ID must be a valid owner id.");
       return;
     }
     setComposeStatus("Sending...");
     const result = await sendMessage({
       message: composeText.trim(),
-      visibility: composeVisibility,
-      ...(composeVisibility === "private"
+      type: composeType,
+      ...(composeZoneId ? { zone_id: composeZoneId } : {}),
+      ...(isPrivateMessageType(composeType)
         ? { receiver_id: parsedReceiverId }
         : {}),
     });
     setComposeStatus(result.error ? "Send failed." : "Sent.");
     if (!result.error) {
       setComposeText("");
-      if (composeVisibility === "private") setComposeReceiverId("");
+      if (isPrivateMessageType(composeType)) setComposeReceiverId("");
     }
   };
+
+  const groupedTypeOptions = useMemo(() => groupMessageTypesForUI(), []);
+  const composeScope = getMessageScopeForType(composeType);
+  const composeCategory = getMessageTypeCategory(composeType);
 
   return (
     <section className="space-y-6 p-8">
@@ -172,7 +189,7 @@ export default function Messages() {
         </p>
       </div>
 
-      <div className="grid gap-4 rounded-[2rem] border border-slate-800/80 bg-slate-950/80 p-5 lg:grid-cols-5">
+      <div className="grid gap-4 rounded-[2rem] border border-slate-800/80 bg-slate-950/80 p-5 lg:grid-cols-6">
         <select
           value={zoneFilter}
           onChange={(e) => setZoneFilter(e.target.value)}
@@ -186,15 +203,39 @@ export default function Messages() {
           ))}
         </select>
         <select
-          value={visibilityFilter}
-          onChange={(e) =>
-            setVisibilityFilter(e.target.value as "all" | MessageVisibility)
-          }
+          value={scopeFilter}
+          onChange={(e) => setScopeFilter(e.target.value as "all" | MessageVisibility)}
           className="rounded-md border border-[#00E5D1]/45 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
         >
-          <option value="all">All visibility</option>
-          <option value="public">public</option>
-          <option value="private">private</option>
+          <option value="all">All Scope</option>
+          <option value="public">Public</option>
+          <option value="private">Private</option>
+        </select>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value as "all" | MessageCategory)}
+          className="rounded-md border border-[#00E5D1]/45 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
+        >
+          <option value="all">All Category</option>
+          <option value="Alarm">Alarm</option>
+          <option value="Alert">Alert</option>
+          <option value="Access">Access</option>
+        </select>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value as "all" | MessageType)}
+          className="rounded-md border border-[#00E5D1]/45 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
+        >
+          <option value="all">All Message Types</option>
+          {groupedTypeOptions.map((group) => (
+            <optgroup key={group.category} label={group.category}>
+              {group.options.map((option) => (
+                <option key={option.type} value={option.type}>
+                  {option.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
         </select>
         <input
           type="date"
@@ -230,17 +271,32 @@ export default function Messages() {
             <p className="text-xs font-medium uppercase tracking-[0.25em] text-slate-500">
               Compose
             </p>
+            <label className="block text-xs font-medium text-slate-400">Message Type</label>
             <select
-              value={composeVisibility}
-              onChange={(e) =>
-                setComposeVisibility(e.target.value as MessageVisibility)
-              }
+              value={composeType}
+              onChange={(e) => setComposeType(e.target.value as MessageType)}
               className="w-full rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
             >
-              <option value="public">Public message</option>
-              <option value="private">Private message</option>
+              {groupedTypeOptions.map((group) => (
+                <optgroup key={group.category} label={group.category}>
+                  {group.options.map((option) => (
+                    <option key={option.type} value={option.type}>
+                      {option.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
-            {composeVisibility === "private" && (
+            <div className="grid grid-cols-2 gap-2 rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
+              <p>
+                Category: <span className="font-medium">{composeCategory}</span>
+              </p>
+              <p>
+                Scope: <span className="font-medium capitalize">{composeScope}</span>
+              </p>
+              <p className="col-span-2 text-slate-500">Scope is determined by selected type.</p>
+            </div>
+            {isPrivateMessageType(composeType) && (
               <>
                 <select
                   value={composeReceiverId}
@@ -286,13 +342,16 @@ export default function Messages() {
                 ? "Loading zone IDs from database..."
                 : `Zone IDs loaded: ${allZoneIds.length}`}
             </p>
-            {composeVisibility === "private" && (
+            {isPrivateMessageType(composeType) && (
               <p className="text-xs text-slate-500">
                 {ownersLoading
                   ? "Loading owner IDs from database..."
                   : `Owner IDs in your zone (${composeZoneId ?? "none"}): ${selectableOwners.length}`}
               </p>
             )}
+            <p className="text-xs text-slate-500">
+              Selected type: {toMessageTypeLabel(composeType)}
+            </p>
             {composeStatus && <p className="text-xs text-slate-500">{composeStatus}</p>}
           </section>
         </div>

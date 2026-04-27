@@ -32,7 +32,11 @@ describe('Login page', () => {
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(loginMock).toHaveBeenCalledWith('user@example.com', 'SecurePass123');
+      expect(loginMock).toHaveBeenCalledWith(
+        'user@example.com',
+        'SecurePass123',
+        expect.objectContaining({ rememberMe: true }),
+      );
     });
   });
 });

@@ -1,4 +1,5 @@
 import type { Message } from "../../services/api/messages";
+import { toMessageTypeLabel } from "../../lib/messageTypes";
 
 export function MessageDetail({ message }: { message: Message | null }) {
   return (
@@ -14,7 +15,13 @@ export function MessageDetail({ message }: { message: Message | null }) {
               {message.zone_id}
             </span>
             <span className="rounded-full bg-slate-900 px-2 py-1 text-[#00E5D1]">
-              {message.visibility}
+              {toMessageTypeLabel(message.type)}
+            </span>
+            <span className="rounded-full bg-slate-900 px-2 py-1 text-amber-300">
+              Category {message.category}
+            </span>
+            <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-300">
+              Scope {message.scope}
             </span>
             <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-300">
               sender {message.sender_id}
@@ -31,6 +38,11 @@ export function MessageDetail({ message }: { message: Message | null }) {
           <p className="text-sm leading-relaxed text-slate-200">
             {message.message}
           </p>
+          {message.raw_payload && (
+            <pre className="overflow-auto rounded-md border border-slate-800 bg-slate-950 p-3 text-xs text-slate-400">
+              {JSON.stringify(message.raw_payload, null, 2)}
+            </pre>
+          )}
         </div>
       )}
     </section>

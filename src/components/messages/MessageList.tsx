@@ -1,5 +1,6 @@
 import { MessageCircle } from "lucide-react";
 import type { Message } from "../../services/api/messages";
+import { toMessageTypeLabel } from "../../lib/messageTypes";
 
 export function MessageList({
   messages,
@@ -43,11 +44,22 @@ export function MessageList({
                       {message.zone_id}
                     </span>
                     <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[#00E5D1]">
-                      {message.visibility}
+                      {toMessageTypeLabel(message.type)}
+                    </span>
+                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-amber-300">
+                      {message.category}
+                    </span>
+                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-slate-300 capitalize">
+                      {message.scope}
                     </span>
                     <span className="rounded-full bg-slate-900 px-2 py-0.5 text-slate-400">
                       from {message.sender_id}
                     </span>
+                    {message.receiver_id != null && (
+                      <span className="rounded-full bg-slate-900 px-2 py-0.5 text-slate-400">
+                        to {message.receiver_id}
+                      </span>
+                    )}
                     <span className="text-slate-500">
                       {new Date(message.created_at).toLocaleString()}
                     </span>

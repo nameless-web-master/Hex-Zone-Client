@@ -1,5 +1,5 @@
 import { API_BASE_URL } from "../api/client";
-import type { Message } from "../api/messages";
+import { normalizeMessage, type Message } from "../api/messages";
 import type {
   MessageFeaturePermissionDecision,
   MessageFeaturePropagationResponse,
@@ -23,20 +23,6 @@ export type MessageFeatureSocketEvent =
 type SocketEvent =
   | MessageFeatureSocketEvent
   | { type: MessageFeatureEnvelopeType | string; data?: unknown };
-
-function isMessage(value: unknown): value is Message {
-  if (!value || typeof value !== "object") return false;
-  const row = value as Record<string, unknown>;
-  return (
-    row.id != null &&
-    typeof row.zone_id === "string" &&
-    typeof row.sender_id === "number" &&
-    (row.receiver_id == null || typeof row.receiver_id === "number") &&
-    (row.visibility === "public" || row.visibility === "private") &&
-    typeof row.message === "string" &&
-    typeof row.created_at === "string"
-  );
-}
 
 function isPropagationResponse(
   value: unknown,
@@ -103,8 +89,9 @@ export function parseMessageFeatureSocketEvent(
 ): MessageFeatureSocketEvent | null {
   try {
     const parsed = JSON.parse(raw) as SocketEvent;
-    if (parsed.type === "NEW_MESSAGE" && isMessage(parsed.data)) {
-      return { type: "NEW_MESSAGE", data: parsed.data };
+    if (parsed.type === "NEW_MESSAGE") {
+      const normalized = normalizeMessage(parsed.data);
+      if (normalized) return { type: "NEW_MESSAGE", data: normalized };
     }
     if (parsed.type === "NEW_GEO_MESSAGE" && isPropagationResponse(parsed.data)) {
       return { type: "NEW_GEO_MESSAGE", data: parsed.data };
