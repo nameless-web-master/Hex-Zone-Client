@@ -3,7 +3,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Dashboard from "../pages/Dashboard";
 
-const mockMap = vi.fn(() => <div data-testid="hex-map" />);
+const mockMap = vi.fn((props?: unknown) => (
+  <div data-testid="hex-map" {...(props as object)} />
+));
 
 const mockUseZones = vi.fn();
 
@@ -35,8 +37,20 @@ vi.mock("../hooks/useZones", () => ({
 }));
 
 const baseZones = [
-  { id: "1", zone_id: "owner-zone", name: "Alpha", h3_cells: ["a"], can_edit: true },
-  { id: "2", zone_id: "owner-zone", name: "Beta", h3_cells: ["b"], can_edit: true },
+  {
+    id: "1",
+    zone_id: "owner-zone",
+    name: "Alpha",
+    h3_cells: ["a"],
+    can_edit: true,
+  },
+  {
+    id: "2",
+    zone_id: "owner-zone",
+    name: "Beta",
+    h3_cells: ["b"],
+    can_edit: true,
+  },
 ];
 
 describe("Dashboard zone management", () => {
@@ -58,24 +72,32 @@ describe("Dashboard zone management", () => {
     render(<Dashboard />);
 
     await waitFor(() => expect(mockMap).toHaveBeenCalled());
-    const latestProps = () => mockMap.mock.lastCall?.[0] as Record<string, unknown>;
+    const latestProps = (): Record<string, unknown> =>
+      (mockMap.mock.calls.at(-1)?.[0] as unknown as Record<string, unknown>) ??
+      {};
 
     await waitFor(() => {
-      const layers = latestProps().savedZoneCellLayers as Array<{ cells: string[] }>;
+      const layers = latestProps().savedZoneCellLayers as Array<{
+        cells: string[];
+      }>;
       expect(layers).toHaveLength(1);
       expect(layers[0].cells).toEqual(["a"]);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Beta" }));
     await waitFor(() => {
-      const layers = latestProps().savedZoneCellLayers as Array<{ cells: string[] }>;
+      const layers = latestProps().savedZoneCellLayers as Array<{
+        cells: string[];
+      }>;
       expect(layers).toHaveLength(1);
       expect(layers[0].cells).toEqual(["b"]);
     });
 
     fireEvent.click(screen.getByLabelText("Show all zones"));
     await waitFor(() => {
-      const layers = latestProps().savedZoneCellLayers as Array<{ cells: string[] }>;
+      const layers = latestProps().savedZoneCellLayers as Array<{
+        cells: string[];
+      }>;
       expect(layers).toHaveLength(2);
     });
   });
@@ -133,7 +155,9 @@ describe("Dashboard zone management", () => {
   });
 
   it("shows backend quota errors when save is blocked", async () => {
-    const updateSavedZone = vi.fn().mockRejectedValue(new Error("zone quota exceeded"));
+    const updateSavedZone = vi
+      .fn()
+      .mockRejectedValue(new Error("zone quota exceeded"));
     mockUseZones.mockReturnValue({
       zones: [baseZones[0]],
       capabilities: { can_create_zone: true },
