@@ -26,12 +26,10 @@ export function useMessageFeed(zoneIds: string[]) {
         const next = exists
           ? prev.map((msg) => (msg.id === incoming.id ? incoming : msg))
           : [incoming, ...prev];
-        const sorted = sortByNewest(next);
-        setGlobalMessages(sorted);
-        return sorted;
+        return sortByNewest(next);
       });
     },
-    [setGlobalMessages],
+    [],
   );
 
   const { lastMessage, status } = useWebSocket({
@@ -79,11 +77,7 @@ export function useMessageFeed(zoneIds: string[]) {
       } else {
         const batch = result.data ?? [];
         if (batch.length > 0) {
-          setLocalMessages(() => {
-            const sorted = sortByNewest(batch);
-            setGlobalMessages(sorted);
-            return sorted;
-          });
+          setLocalMessages(sortByNewest(batch));
         } else {
           setLocalMessages([]);
           setGlobalMessages([]);
@@ -100,6 +94,10 @@ export function useMessageFeed(zoneIds: string[]) {
       if (pollTimer) window.clearTimeout(pollTimer);
     };
   }, [token, setGlobalMessages, ownerId]);
+
+  useEffect(() => {
+    setGlobalMessages(messages);
+  }, [messages, setGlobalMessages]);
 
   const zones = useMemo(
     () => Array.from(new Set(messages.map((msg) => msg.zone_id))),

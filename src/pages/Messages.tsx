@@ -5,6 +5,7 @@ import { MessageDetail } from "../components/messages/MessageDetail";
 import { useMessageFeed } from "../hooks/useMessageFeed";
 import { sendMessage, type MessageVisibility } from "../services/api/messages";
 import { getOwners, type OwnerListItem } from "../services/api/auth";
+import { getMembers, type Member } from "../services/api/members";
 import { getZones } from "../services/api/zones";
 import { useAuth } from "../hooks/useAuth";
 import {
@@ -37,6 +38,7 @@ export default function Messages() {
   const [zonesLoading, setZonesLoading] = useState(false);
   const [owners, setOwners] = useState<OwnerListItem[]>([]);
   const [ownersLoading, setOwnersLoading] = useState(false);
+  const [members, setMembers] = useState<Member[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -62,10 +64,11 @@ export default function Messages() {
   useEffect(() => {
     let active = true;
     setOwnersLoading(true);
-    void getOwners({ skip: 0, limit: 500 })
-      .then((result) => {
+    void Promise.all([getOwners({ skip: 0, limit: 500 }), getMembers()])
+      .then(([ownersResult, membersResult]) => {
         if (!active) return;
-        setOwners(result.data ?? []);
+        setOwners(ownersResult.data ?? []);
+        setMembers(membersResult.data ?? []);
       })
       .finally(() => {
         if (active) setOwnersLoading(false);
@@ -88,7 +91,7 @@ export default function Messages() {
     () => (userZoneId == null ? null : String(userZoneId).trim()),
     [userZoneId],
   );
-  const selectableOwners = useMemo(() => {
+  const selectableReceivers = useMemo(() => {
     const readOwnerZoneId = (row: OwnerListItem): string => {
       const loose = row as OwnerListItem & {
         zoneId?: string | number | null;
@@ -98,17 +101,56 @@ export default function Messages() {
       return raw == null ? "" : String(raw).trim();
     };
 
-    return owners.filter((row) => {
+    const fromOwners = owners
+      .filter((row) => {
+        const notSelf = Number(row.id) !== ownerId;
+        if (!notSelf) return false;
+        if (!composeZoneId) return true;
+        const ownerZoneId = readOwnerZoneId(row);
+        // Keep owners with unknown zone visible to avoid an empty picker
+        // when the backend omits zone metadata.
+        if (!ownerZoneId) return true;
+        return ownerZoneId === composeZoneId;
+      })
+      .map((row) => {
+        const name =
+          `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+          row.email ||
+          "Owner";
+        const zoneId = readOwnerZoneId(row);
+        return {
+          id: Number(row.id),
+          name,
+          zoneId,
+        };
+      });
+    if (fromOwners.length > 0) return fromOwners;
+
+    const candidates = members
+      .map((row) => {
+        const id = Number(row.account_owner_id ?? row.id);
+        if (!Number.isFinite(id) || id <= 0) return null;
+        const name =
+          `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+          row.name ||
+          row.email ||
+          "Member";
+        const zoneId = String(row.zone_id ?? "").trim();
+        return { id, name, zoneId };
+      })
+      .filter((row): row is { id: number; name: string; zoneId: string } => Boolean(row));
+
+    const deduped = Array.from(
+      new Map(candidates.map((row) => [row.id, row])).values(),
+    );
+    return deduped.filter((row) => {
       const notSelf = Number(row.id) !== ownerId;
       if (!notSelf) return false;
       if (!composeZoneId) return true;
-      const ownerZoneId = readOwnerZoneId(row);
-      // Keep owners with unknown zone visible to avoid an empty picker
-      // when the backend omits zone metadata.
-      if (!ownerZoneId) return true;
-      return ownerZoneId === composeZoneId;
+      if (!row.zoneId) return true;
+      return row.zoneId === composeZoneId;
     });
-  }, [owners, composeZoneId, ownerId]);
+  }, [owners, members, composeZoneId, ownerId]);
 
   const filteredMessages = useMemo(() => {
     return messages.filter((message) => {
@@ -306,14 +348,10 @@ export default function Messages() {
                   <option value="">
                     {ownersLoading ? "Loading owner IDs..." : "Pick receiver owner ID"}
                   </option>
-                  {selectableOwners.map((row) => {
-                    const name =
-                      `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
-                      row.email ||
-                      "Owner";
+                  {selectableReceivers.map((row) => {
                     return (
                       <option key={`owner-${row.id}`} value={String(row.id)}>
-                        {row.id} - {name}
+                        {row.id} - {row.name}
                       </option>
                     );
                   })}
@@ -346,7 +384,7 @@ export default function Messages() {
               <p className="text-xs text-slate-500">
                 {ownersLoading
                   ? "Loading owner IDs from database..."
-                  : `Owner IDs in your zone (${composeZoneId ?? "none"}): ${selectableOwners.length}`}
+                  : `Owner IDs in your zone (${composeZoneId ?? "none"}): ${selectableReceivers.length}`}
               </p>
             )}
             <p className="text-xs text-slate-500">
