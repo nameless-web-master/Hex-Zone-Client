@@ -35,6 +35,8 @@ export type SendMessagePayload = {
   type: MessageType;
   zone_id?: string;
   receiver_id?: number;
+  /** Access-channel recipient (guest). When set, member UI should omit owner-to-owner use for PERMISSION/CHAT. */
+  guest_id?: string;
 };
 
 function toLegacyTypeFromVisibility(visibility: unknown): MessageType | null {
@@ -132,16 +134,22 @@ export async function listMessages(params: ListMessagesParams) {
 }
 
 export async function sendMessage(payload: SendMessagePayload) {
+  const gid = payload.guest_id?.trim();
+  const data: Record<string, unknown> = {
+    message: payload.message,
+    message_type: payload.type,
+    visibility: getMessageScopeForType(payload.type),
+    ...(payload.zone_id ? { zone_id: payload.zone_id } : {}),
+  };
+  if (gid) {
+    data.guest_id = gid;
+  } else if (payload.receiver_id != null) {
+    data.receiver_id = payload.receiver_id;
+  }
   const result = await request<unknown>({
     method: "POST",
     url: "/messages",
-    data: {
-      message: payload.message,
-      message_type: payload.type,
-      visibility: getMessageScopeForType(payload.type),
-      ...(payload.zone_id ? { zone_id: payload.zone_id } : {}),
-      ...(payload.receiver_id != null ? { receiver_id: payload.receiver_id } : {}),
-    },
+    data,
   });
   return {
     ...result,

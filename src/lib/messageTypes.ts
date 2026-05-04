@@ -62,6 +62,11 @@ export function isPrivateMessageType(type: MessageType): boolean {
   return PRIVATE_MESSAGE_TYPES.has(type);
 }
 
+/** Access types where the member compose UI should address guests only (not owner-to-owner). */
+export function isAccessGuestChannelType(type: MessageType): boolean {
+  return type === "PERMISSION" || type === "CHAT";
+}
+
 export function toMessageTypeLabel(type: MessageType): string {
   return MESSAGE_TYPE_META[type].displayLabel;
 }

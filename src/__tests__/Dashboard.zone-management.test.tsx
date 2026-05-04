@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Dashboard from "../pages/Dashboard";
 
@@ -13,6 +14,23 @@ vi.mock("../components/HexMapperMap", () => ({
   __esModule: true,
   default: (props: unknown) => mockMap(props),
   h3CellsAtPoint: () => [],
+}));
+
+vi.mock("../hooks/useWebSocket", () => ({
+  useWebSocket: () => ({
+    lastMessage: null,
+    sendMessage: vi.fn(),
+    status: "closed" as const,
+  }),
+}));
+
+vi.mock("../services/api/accessPermissions", () => ({
+  listGuestRequestsForZone: vi.fn().mockResolvedValue({ data: [], error: null }),
+  approveGuestPermissionRequestRemote: vi.fn().mockResolvedValue({ data: null, error: null }),
+  denyGuestPermissionRequestRemote: vi.fn().mockResolvedValue({ data: null, error: null }),
+  createGuestChatThreadPlaceholder: vi
+    .fn()
+    .mockResolvedValue({ data: null, error: null }),
 }));
 
 vi.mock("../components/AddressAutocompleteInput", () => ({
@@ -53,6 +71,14 @@ const baseZones = [
   },
 ];
 
+function renderDashboard() {
+  return render(
+    <MemoryRouter>
+      <Dashboard />
+    </MemoryRouter>,
+  );
+}
+
 describe("Dashboard zone management", () => {
   beforeEach(() => {
     mockMap.mockClear();
@@ -69,7 +95,7 @@ describe("Dashboard zone management", () => {
       updateSavedZone: vi.fn(),
     });
 
-    render(<Dashboard />);
+    renderDashboard();
 
     await waitFor(() => expect(mockMap).toHaveBeenCalled());
     const latestProps = (): Record<string, unknown> =>
@@ -115,7 +141,7 @@ describe("Dashboard zone management", () => {
       updateSavedZone: vi.fn(),
     });
 
-    render(<Dashboard />);
+    renderDashboard();
 
     const newZoneButton = screen.getByRole("button", { name: /\+ New zone/i });
     expect(newZoneButton).toBeDisabled();
@@ -135,7 +161,7 @@ describe("Dashboard zone management", () => {
       updateSavedZone: vi.fn(),
     });
 
-    render(<Dashboard />);
+    renderDashboard();
 
     fireEvent.click(screen.getByRole("button", { name: /\+ New zone/i }));
     fireEvent.change(screen.getByLabelText("Zone name"), {
@@ -167,7 +193,7 @@ describe("Dashboard zone management", () => {
       updateSavedZone,
     });
 
-    render(<Dashboard />);
+    renderDashboard();
 
     fireEvent.change(screen.getByLabelText("Zone type"), {
       target: { value: "custom_1" },

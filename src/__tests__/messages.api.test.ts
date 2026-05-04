@@ -111,6 +111,38 @@ describe("messages api adapter", () => {
     );
   });
 
+  it("sends guest_id for access channel and omits receiver_id", async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        id: "m-g",
+        zone_id: "ZONE-1",
+        sender_id: 1,
+        receiver_id: null,
+        message_type: "PERMISSION",
+        message: "gate",
+        created_at: "2026-04-26T00:00:00Z",
+      },
+      error: null,
+      loading: false,
+    });
+
+    await sendMessage({
+      type: "PERMISSION",
+      zone_id: "ZONE-1",
+      message: "gate",
+      guest_id: "guest-uuid-9",
+    });
+
+    const call = requestMock.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({
+      message_type: "PERMISSION",
+      visibility: "private",
+      guest_id: "guest-uuid-9",
+      zone_id: "ZONE-1",
+    });
+    expect(call.data.receiver_id).toBeUndefined();
+  });
+
   it("list normalization accepts full supported type taxonomy", async () => {
     requestMock.mockResolvedValue({
       data: [

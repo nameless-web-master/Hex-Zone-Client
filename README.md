@@ -25,6 +25,23 @@ You can also override the API base URL using the environment variable:
 
 - `VITE_API_BASE_URL`
 
+### Guest session (approved anonymous guests)
+
+**Backend handoff:** copy or share **`docs/BACKEND_ACCESS_ZONE_FULL_CONTRACT.md`** with the API team — it summarizes Access Zone messaging (PERMISSION / CHAT), guest JWT routes, **`GET /api/access/guest-requests`**, **`GET .../peers`**, and `POST /messages` with **`guest_id`**, aligned with the Access Zone propagation PDF set.
+
+Coordinate your API release: extended `GET` access session poll (`APPROVED` may include `exchange_code` / `exchange_expires_at`), `POST /api/access/guest-session`, and authenticated `/api/guest/*` (`/me`, **`/zones/{id}/peers`** (critical for guest Messaging), `/messages`, optional `/zones/{id}/dashboard`). This client does not pin a server semver.
+
+When the backend implements the guest contract (session poll may return `exchange_code` when status is `APPROVED`), the client exchanges that code at `POST /api/access/guest-session`, stores the returned JWT in **session storage** under `zoneweaver_guest_access_token`, and uses it only for `/api/guest/*` routes via a dedicated axios instance (never mixed with the member `zoneweaver_token`).
+
+Configure paths if your router differs (see `.env.example`):
+
+- `VITE_GUEST_SESSION_EXCHANGE_URL` (default `/api/access/guest-session`)
+- `VITE_GUEST_API_BASE_PATH` (default `/api/guest`)
+
+Guest UI routes: `/guest/dashboard`, `/guest/messages`. Until the backend ships these endpoints, exchange or guest calls may 404; the UI surfaces errors where relevant.
+
+Member **Messages** compose for **PERMISSION** and **CHAT** uses the guest list from `GET` guest-requests for the zone and sends `guest_id` on `POST /messages` (not `receiver_id`). **PRIVATE** still uses owner `receiver_id`. Align field names with your server if needed.
+
 ## Testing
 
 Run unit tests with:

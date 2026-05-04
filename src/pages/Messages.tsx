@@ -12,11 +12,14 @@ import {
   getMessageTypeCategory,
   getMessageScopeForType,
   groupMessageTypesForUI,
+  isAccessGuestChannelType,
   isPrivateMessageType,
   toMessageTypeLabel,
   type MessageCategory,
   type MessageType,
 } from "../lib/messageTypes";
+import type { GuestRequestRow } from "../lib/guestRealtime";
+import { listGuestRequestsForZone } from "../services/api/accessPermissions";
 
 export default function Messages() {
   const { user } = useAuth();
@@ -39,6 +42,9 @@ export default function Messages() {
   const [owners, setOwners] = useState<OwnerListItem[]>([]);
   const [ownersLoading, setOwnersLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
+  const [guestRows, setGuestRows] = useState<GuestRequestRow[]>([]);
+  const [guestsLoading, setGuestsLoading] = useState(false);
+  const [guestListError, setGuestListError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -91,6 +97,42 @@ export default function Messages() {
     () => (userZoneId == null ? null : String(userZoneId).trim()),
     [userZoneId],
   );
+
+  const effectiveZoneForGuests = useMemo(() => {
+    const z = composeZoneId?.trim();
+    if (z) return z;
+    if (zoneFilter !== "all" && zoneFilter.trim()) return zoneFilter.trim();
+    return dbZoneIds[0]?.trim() ?? "";
+  }, [composeZoneId, zoneFilter, dbZoneIds]);
+
+  useEffect(() => {
+    const z = effectiveZoneForGuests.trim();
+    if (!z) {
+      setGuestRows([]);
+      setGuestListError(null);
+      return;
+    }
+    let active = true;
+    setGuestsLoading(true);
+    setGuestListError(null);
+    void listGuestRequestsForZone(z).then((res) => {
+      if (!active) return;
+      setGuestsLoading(false);
+      if (res.error) {
+        setGuestListError(res.error);
+        setGuestRows([]);
+        return;
+      }
+      setGuestRows(res.data);
+    });
+    return () => {
+      active = false;
+    };
+  }, [effectiveZoneForGuests]);
+
+  useEffect(() => {
+    setComposeReceiverId("");
+  }, [composeType]);
   const selectableReceivers = useMemo(() => {
     const readOwnerZoneId = (row: OwnerListItem): string => {
       const loose = row as OwnerListItem & {
@@ -188,12 +230,22 @@ export default function Messages() {
       return;
     }
     if (!composeText.trim()) return;
-    if (isPrivateMessageType(composeType) && !composeReceiverId) {
+    const accessGuest = isAccessGuestChannelType(composeType);
+    if (accessGuest) {
+      if (!composeReceiverId.trim()) {
+        setComposeStatus("Pick a guest for PERMISSION or CHAT.");
+        return;
+      }
+    } else if (isPrivateMessageType(composeType) && !composeReceiverId) {
       setComposeStatus("Receiver ID is required for private messages.");
       return;
     }
     const parsedReceiverId = Number(composeReceiverId);
-    if (isPrivateMessageType(composeType) && (!Number.isFinite(parsedReceiverId) || parsedReceiverId <= 0)) {
+    if (
+      !accessGuest &&
+      isPrivateMessageType(composeType) &&
+      (!Number.isFinite(parsedReceiverId) || parsedReceiverId <= 0)
+    ) {
       setComposeStatus("Receiver ID must be a valid owner id.");
       return;
     }
@@ -202,7 +254,10 @@ export default function Messages() {
       message: composeText.trim(),
       type: composeType,
       ...(composeZoneId ? { zone_id: composeZoneId } : {}),
-      ...(isPrivateMessageType(composeType)
+      ...(accessGuest && composeReceiverId.trim()
+        ? { guest_id: composeReceiverId.trim() }
+        : {}),
+      ...(!accessGuest && isPrivateMessageType(composeType)
         ? { receiver_id: parsedReceiverId }
         : {}),
     });
@@ -212,6 +267,11 @@ export default function Messages() {
       if (isPrivateMessageType(composeType)) setComposeReceiverId("");
     }
   };
+
+  const selectableGuests = useMemo(
+    () => guestRows.filter((r) => r.status !== "REJECTED"),
+    [guestRows],
+  );
 
   const groupedTypeOptions = useMemo(() => groupMessageTypesForUI(), []);
   const composeScope = getMessageScopeForType(composeType);
@@ -338,7 +398,45 @@ export default function Messages() {
               </p>
               <p className="col-span-2 text-slate-500">Scope is determined by selected type.</p>
             </div>
-            {isPrivateMessageType(composeType) && (
+            {isAccessGuestChannelType(composeType) && (
+              <>
+                <p className="text-xs text-slate-500">
+                  PERMISSION and CHAT here go to <span className="font-medium text-slate-300">guests</span> in this
+                  zone only (not member-to-member). Zone for list:{" "}
+                  <span className="font-mono text-slate-400">
+                    {effectiveZoneForGuests || "—"}
+                  </span>
+                </p>
+                <select
+                  value={composeReceiverId}
+                  onChange={(e) => setComposeReceiverId(e.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
+                >
+                  <option value="">
+                    {guestsLoading ? "Loading guests…" : "Pick a guest (guest id)"}
+                  </option>
+                  {selectableGuests.map((row) => (
+                    <option key={`guest-${row.id}`} value={row.id}>
+                      {row.guestName?.trim() || "Guest"} — {row.id.slice(0, 12)}
+                      {row.id.length > 12 ? "…" : ""} ({row.expectation}, {row.status})
+                    </option>
+                  ))}
+                </select>
+                {guestListError ? (
+                  <p className="text-xs text-amber-200">
+                    Guest list: {guestListError} (set{" "}
+                    <span className="font-mono">VITE_ADMIN_GUEST_REQUESTS_LIST_URL</span> if your API path differs).
+                  </p>
+                ) : null}
+                {!guestsLoading && !guestListError && selectableGuests.length === 0 ? (
+                  <p className="text-xs text-slate-500">
+                    No guests in this zone yet, or approvals are still pending. You can also open the zone on the
+                    Dashboard to review guest requests.
+                  </p>
+                ) : null}
+              </>
+            )}
+            {!isAccessGuestChannelType(composeType) && isPrivateMessageType(composeType) && (
               <>
                 <select
                   value={composeReceiverId}
@@ -380,7 +478,14 @@ export default function Messages() {
                 ? "Loading zone IDs from database..."
                 : `Zone IDs loaded: ${allZoneIds.length}`}
             </p>
-            {isPrivateMessageType(composeType) && (
+            {isAccessGuestChannelType(composeType) && (
+              <p className="text-xs text-slate-500">
+                {guestsLoading
+                  ? "Loading guest list…"
+                  : `Guests available: ${selectableGuests.length}`}
+              </p>
+            )}
+            {!isAccessGuestChannelType(composeType) && isPrivateMessageType(composeType) && (
               <p className="text-xs text-slate-500">
                 {ownersLoading
                   ? "Loading owner IDs from database..."

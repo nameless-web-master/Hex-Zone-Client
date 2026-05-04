@@ -9,6 +9,8 @@ import HexMapperMap, {
   type SavedZonePolygonLayer,
 } from "../components/HexMapperMap";
 import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
+import { GuestRequestsDashboardSection } from "../components/dashboard/GuestRequestsDashboardSection";
+import { GuestAccessQrSection } from "../components/dashboard/GuestAccessQrSection";
 import { useAuth } from "../hooks/useAuth";
 import {
   useZones,
@@ -1937,6 +1939,16 @@ export default function Dashboard() {
         </div>
         <span className="text-sm text-slate-300">{userLabel}</span>
       </header>
+
+      {zoneId.trim() !== "" ? (
+        <GuestRequestsDashboardSection zoneId={zoneId.trim()} />
+      ) : null}
+
+      {zoneId.trim() !== "" ? (
+        <div className="border-b border-slate-800/80 px-4 py-4 sm:px-6">
+          <GuestAccessQrSection zoneId={zoneId.trim()} compact />
+        </div>
+      ) : null}
 
       <div className="flex min-h-[min(100dvh,920px)] flex-1 flex-col lg:min-h-[calc(100dvh-11rem)] lg:flex-row">
         <aside className="flex w-full flex-col border-slate-800/80 lg:w-[400px] lg:shrink-0 lg:border-r">

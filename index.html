@@ -9,6 +9,17 @@
       content="Zone Weaver - User-defined spatial zone message distribution with H3 hexagon mapping."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      @media print {
+        #root header,
+        #root footer {
+          display: none !important;
+        }
+        #root main {
+          padding-top: 0.5rem !important;
+        }
+      }
+    </style>
   </head>
   <body class="min-h-screen bg-slate-950 text-slate-100">
     <div id="root"></div>

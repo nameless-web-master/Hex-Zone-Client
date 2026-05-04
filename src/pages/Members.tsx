@@ -110,7 +110,7 @@ export default function Members() {
           <h2 className="text-xl font-semibold text-white">
             Owners (administration)
           </h2>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             {owners.map((owner) => {
               const name =
                 `${owner.first_name ?? ""} ${owner.last_name ?? ""}`.trim() ||
