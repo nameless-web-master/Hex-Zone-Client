@@ -1,5 +1,5 @@
 import { MessageCircle } from "lucide-react";
-import type { Message } from "../../services/api/messages";
+import { formatMessageSenderLabel, type Message } from "../../services/api/messages";
 import { toMessageTypeLabel } from "../../lib/messageTypes";
 
 export function MessageList({
@@ -53,7 +53,7 @@ export function MessageList({
                       {message.scope}
                     </span>
                     <span className="rounded-full bg-slate-900 px-2 py-0.5 text-slate-400">
-                      from {message.sender_id}
+                      from {formatMessageSenderLabel(message)}
                     </span>
                     {message.receiver_id != null && (
                       <span className="rounded-full bg-slate-900 px-2 py-0.5 text-slate-400">

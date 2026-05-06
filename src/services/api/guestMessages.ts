@@ -1,5 +1,14 @@
 import { AxiosError } from "axios";
+import { API_BASE_URL } from "./client";
 import { guestApiBasePath, guestSessionAxios } from "./guestSession";
+
+function guestApiDevLog(method: string, pathWithQuery: string) {
+  if (!import.meta.env.DEV) return;
+  const root = API_BASE_URL.replace(/\/+$/, "");
+  const p = pathWithQuery.startsWith("/") ? pathWithQuery : `/${pathWithQuery}`;
+  // eslint-disable-next-line no-console
+  console.debug(`[guest-api] ${method} ${root}${p}`);
+}
 
 function unwrapEnvelope(raw: unknown): unknown {
   if (
@@ -200,6 +209,7 @@ export async function fetchGuestMe(): Promise<{
   status?: number;
 }> {
   const base = guestApiBasePath();
+  guestApiDevLog("GET", `${base}/me`);
   try {
     const res = await guestSessionAxios.get<unknown>(`${base}/me`, {
       validateStatus: () => true,
@@ -233,6 +243,7 @@ export async function fetchGuestPeers(zoneId: string): Promise<{
   const z = zoneId.trim();
   if (!z) return { data: [], error: "Missing zone id." };
   const base = guestApiBasePath();
+  guestApiDevLog("GET", `${base}/zones/${encodeURIComponent(z)}/peers`);
   try {
     const res = await guestSessionAxios.get<unknown>(`${base}/zones/${encodeURIComponent(z)}/peers`, {
       validateStatus: () => true,
@@ -274,6 +285,7 @@ export async function listGuestThreadMessages(params: {
   q.set("zone_id", params.zone_id.trim());
   q.set("with_owner_id", params.with_owner_id.trim());
   if (params.limit != null) q.set("limit", String(params.limit));
+  guestApiDevLog("GET", `${base}/messages?${q.toString()}`);
   try {
     const res = await guestSessionAxios.get<unknown>(`${base}/messages?${q.toString()}`, {
       validateStatus: () => true,
@@ -298,7 +310,7 @@ export async function listGuestThreadMessages(params: {
 
 export type GuestSendMessageBody = {
   zone_id: string;
-  type: "CHAT" | "PERMISSION";
+  type: "CHAT";
   text?: string;
   to_owner_id: string;
   msg?: Record<string, unknown>;
@@ -308,6 +320,7 @@ export async function sendGuestMessage(
   body: GuestSendMessageBody,
 ): Promise<{ data: GuestApiMessage | null; error: string | null; status?: number }> {
   const base = guestApiBasePath();
+  guestApiDevLog("POST", `${base}/messages`);
   try {
     const res = await guestSessionAxios.post<unknown>(`${base}/messages`, body, {
       validateStatus: () => true,
@@ -359,6 +372,7 @@ export async function fetchGuestZoneDashboard(zoneId: string): Promise<{
   const z = zoneId.trim();
   if (!z) return { data: null, error: "Missing zone id." };
   const base = guestApiBasePath();
+  guestApiDevLog("GET", `${base}/zones/${encodeURIComponent(z)}/dashboard`);
   try {
     const res = await guestSessionAxios.get<unknown>(
       `${base}/zones/${encodeURIComponent(z)}/dashboard`,

@@ -54,7 +54,9 @@ export const MESSAGE_TYPE_META: Record<MessageType, MessageTypeMeta> = {
 
 export function toMessageType(value: unknown): MessageType | null {
   if (typeof value !== "string") return null;
-  if ((MESSAGE_TYPES as readonly string[]).includes(value)) return value as MessageType;
+  const upper = value.trim().toUpperCase();
+  if (!upper) return null;
+  if ((MESSAGE_TYPES as readonly string[]).includes(upper)) return upper as MessageType;
   return null;
 }
 

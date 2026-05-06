@@ -57,11 +57,12 @@ export default function GuestAccessQr() {
           Guest access QR
         </h1>
         <p className="mt-3 max-w-2xl text-lg leading-relaxed text-slate-400">
-          Administrators issue tokens that open{" "}
+          Administrators manage one reusable Guest QR per zone for{" "}
           <Link to="/access" className="text-[#00E5D1] hover:underline">
             /access?gt=…
           </Link>{" "}
-          without sign-in. Account-invite QR codes stay under{" "}
+          without sign-in. Rotate only when you need to invalidate the existing link.
+          Account-invite QR codes stay under{" "}
           <Link to="/qr" className="text-[#00E5D1] hover:underline">
             QR invite
           </Link>

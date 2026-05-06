@@ -3,11 +3,64 @@ import {
   buildGuestAccessUrlWithToken,
   ensureGuestAccessUrlIncludesZidWhenGtOnly,
 } from "../../lib/guestAccessUrls";
+import type { PrimaryGuestQrTokenResponse } from "./accessPermissions";
 import { apiClient, request } from "./client";
 
 export function guestQrTokensBasePath(): string {
   const raw = String(import.meta.env.VITE_GUEST_QR_TOKENS_BASE_PATH ?? "").trim();
   return raw.length > 0 ? raw : "/api/access/qr-tokens";
+}
+
+export function guestPrimaryQrPath(): string {
+  const raw = String(import.meta.env.VITE_GUEST_PRIMARY_QR_PATH ?? "").trim();
+  return raw.length > 0 ? raw : "/api/access/qr-tokens/primary";
+}
+
+export function guestPrimaryQrRotatePath(): string {
+  const raw = String(import.meta.env.VITE_GUEST_PRIMARY_QR_ROTATE_PATH ?? "").trim();
+  return raw.length > 0 ? raw : "/api/access/qr-tokens/primary/rotate";
+}
+
+function normalizePrimaryQrToken(raw: unknown): PrimaryGuestQrTokenResponse | null {
+  const body =
+    raw && typeof raw === "object" && "status" in raw && "data" in raw
+      ? (raw as { data: unknown }).data
+      : raw;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const row = body as Record<string, unknown>;
+  const zone_id = String(row.zone_id ?? "").trim();
+  if (!zone_id) return null;
+  return {
+    zone_id,
+    url: row.url == null ? null : String(row.url),
+    path_with_query: row.path_with_query == null ? null : String(row.path_with_query),
+    token_suffix: row.token_suffix == null ? null : String(row.token_suffix),
+  };
+}
+
+export async function fetchPrimaryGuestQrToken(zoneId: string) {
+  const res = await request<unknown>({
+    method: "GET",
+    url: guestPrimaryQrPath(),
+    params: { zone_id: zoneId.trim() },
+  });
+  return {
+    ...res,
+    data: normalizePrimaryQrToken(res.data),
+  };
+}
+
+export async function rotatePrimaryGuestQrToken(zoneId: string) {
+  const res = await request<unknown>({
+    method: "POST",
+    url: guestPrimaryQrRotatePath(),
+    params: { zone_id: zoneId.trim() },
+    data: {},
+  });
+  return {
+    ...res,
+    data: normalizePrimaryQrToken(res.data),
+  };
 }
 
 export type CreateGuestQrTokenPayload = {

@@ -47,7 +47,7 @@ export function useMessageFeed(zoneIds: string[]) {
 
   useEffect(() => {
     if (status === "closed" && token) {
-      setError("WebSocket connection error");
+      setError(null);
       return;
     }
     if (status === "open") {
@@ -66,6 +66,7 @@ export function useMessageFeed(zoneIds: string[]) {
 
     const poll = async () => {
       setLoading(true);
+      /** Hydrates admin list from GET /messages/?owner_id=…&skip&limit */
       const result = await listMessages({
         owner_id: ownerId,
         skip: 0,

@@ -14,5 +14,7 @@ interface ImportMetaEnv {
   readonly VITE_GUEST_SESSION_EXCHANGE_URL?: string;
   /** Guest Bearer API prefix; default `/api/guest`. */
   readonly VITE_GUEST_API_BASE_PATH?: string;
+  /** When `"true"`, Messages page shows full integration / PERMISSION contract copy in the Access info panel. */
+  readonly VITE_SHOW_MESSAGES_INTEGRATION_BANNER?: string;
 }
 

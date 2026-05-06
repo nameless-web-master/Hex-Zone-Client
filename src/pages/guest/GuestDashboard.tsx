@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { MessageSquare, Loader2 } from "lucide-react";
 import { getGuestSessionMeta } from "../../lib/guestAccessToken";
+import { tryParseGuestDashboardMap } from "../../lib/guestDashboardMap";
+import GuestZoneReadOnlyMap from "../../components/guest/GuestZoneReadOnlyMap";
 import { fetchGuestMe, fetchGuestZoneDashboard } from "../../services/api/guestMessages";
 import type { GuestMe } from "../../services/api/guestMessages";
 
@@ -117,13 +119,19 @@ export default function GuestDashboard() {
   const displayName = me?.display_name || stored?.display_name || "Guest";
   const dash = asDashboardPayload(dashboard);
   const linkRows = dashboardLinks(dash?.links);
+  const guestMapModel = useMemo(() => tryParseGuestDashboardMap(dashboard), [dashboard]);
+  /** Map/hints tie to resolved zone + dashboard blob; `/me` can still be loading separately. */
+  const dashboardGeoReady = primaryZone.trim().length > 0;
 
   return (
-    <section className="mx-auto max-w-2xl space-y-6">
+    <section className="mx-auto w-full min-w-0 max-w-[min(1920px,100%)] space-y-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold text-slate-100">Guest dashboard</h1>
         <p className="text-sm text-slate-400">
           Signed in as <span className="text-slate-200">{displayName}</span>
+        </p>
+        <p className="text-xs text-slate-500">
+          Guest access is read-only for dashboard, map, and members.
         </p>
       </header>
 
@@ -176,6 +184,31 @@ export default function GuestDashboard() {
           ) : (
             <p className="text-sm text-slate-500">Pick a zone from your host to use messaging.</p>
           )}
+
+          {dashboardGeoReady && guestMapModel ? (
+            <div className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Zone map (read-only)
+              </h2>
+              <GuestZoneReadOnlyMap center={guestMapModel.center} polygons={guestMapModel.polygons} />
+            </div>
+          ) : null}
+
+          {dashboardGeoReady &&
+          !guestMapModel &&
+          dashboard != null &&
+          typeof dashboard === "object" ? (
+            <div className="rounded-lg border border-slate-800/80 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+              Map requires backend dashboard map payload (
+              <span className="font-mono text-slate-500">geojson</span>,{" "}
+              <span className="font-mono text-slate-500">bounds</span>,{" "}
+              <span className="font-mono text-slate-500">h3_cells</span>,{" "}
+              <span className="font-mono text-slate-500">geo_fence</span>). See README.md (Guest session, Backend
+              integration) and share{" "}
+              <span className="font-mono text-slate-300">docs/BACKEND_ACCESS_ZONE_FULL_CONTRACT.md</span> with your API
+              team.
+            </div>
+          ) : null}
 
           {dash && (dash.label || dash.welcome_text || linkRows.length > 0) ? (
             <div className="space-y-3 rounded-xl border border-emerald-500/25 bg-emerald-950/15 px-4 py-4 text-emerald-50">

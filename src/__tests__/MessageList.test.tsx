@@ -36,12 +36,26 @@ describe("MessageList", () => {
             created_at: "2026-01-01T00:00:00Z",
             raw_payload: null,
           },
+          {
+            id: "m3",
+            zone_id: "ZONE-3",
+            sender_id: 2,
+            receiver_id: 99,
+            type: "PERMISSION",
+            category: "Access",
+            scope: "private",
+            visibility: "private",
+            message: "permission workflow event",
+            created_at: "2026-01-01T00:00:00Z",
+            raw_payload: null,
+          },
         ]}
       />,
     );
 
     expect(screen.getByText("NS PANIC")).toBeInTheDocument();
     expect(screen.getByText("WELLNESS CHECK")).toBeInTheDocument();
+    expect(screen.getByText("PERMISSION")).toBeInTheDocument();
     expect(screen.getByText("Alarm")).toBeInTheDocument();
     expect(screen.getAllByText("public")[0]).toBeInTheDocument();
   });

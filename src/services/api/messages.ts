@@ -3,11 +3,15 @@ import {
   getMessageTypeCategory,
   getMessageScopeForType,
   toMessageType,
+  type MessageCategory,
   type MessageScope,
   type MessageType,
 } from "../../lib/messageTypes";
 
 export type MessageVisibility = MessageScope;
+
+/** Placeholder `sender_id` when the logical sender is a guest (UUID) without a numeric owner id. */
+export const GUEST_LOGICAL_SENDER_ID = 0;
 
 export type Message = {
   id: string;
@@ -21,6 +25,8 @@ export type Message = {
   message: string;
   created_at: string;
   raw_payload: Record<string, unknown> | null;
+  /** Present when the row is guest-originated Access traffic (mirrored CHAT/PERMISSION) without numeric sender. */
+  guest_sender_id?: string;
 };
 
 export type ListMessagesParams = {
@@ -54,10 +60,116 @@ function normalizeReceiverId(value: unknown): number | null {
   return null;
 }
 
+function normalizeOwnerNumericId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  }
+  return null;
+}
+
+function coerceMessageCategory(value: unknown): MessageCategory | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim().toLowerCase();
+  if (key === "alarm") return "Alarm";
+  if (key === "alert") return "Alert";
+  if (key === "access") return "Access";
+  return null;
+}
+
+function coerceMessageScope(value: unknown): MessageScope | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim().toLowerCase();
+  if (key === "public" || key === "private") return key;
+  return null;
+}
+
 function logMalformedMessageWarning(id: unknown, reason: string) {
   if (!import.meta.env.DEV) return;
   // eslint-disable-next-line no-console
   console.warn(`[messages] malformed message record (${String(id ?? "unknown")}): ${reason}`);
+}
+
+function logGuestLogicalSenderAccepted(id: unknown, guestId: string) {
+  if (!import.meta.env.DEV) return;
+  // eslint-disable-next-line no-console
+  console.info(
+    `[messages] inbound Access row kept via guest sender path (${String(id ?? "unknown")}): guest_id=${guestId}; sender_id placeholder ${GUEST_LOGICAL_SENDER_ID}`,
+  );
+}
+
+function normalizeGuestSenderIdString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const t = value.trim();
+  return t.length > 0 ? t : null;
+}
+
+/**
+ * Guest id on mirrored Access rows may appear at the top level, under `msg`, or inside `raw_payload`.
+ */
+export function extractGuestSenderId(
+  row: Record<string, unknown>,
+  msgRecord: Record<string, unknown> | null,
+  structuredPayload: Record<string, unknown> | null,
+): string | null {
+  const tryObj = (o: Record<string, unknown> | null) => {
+    if (!o) return null;
+    return (
+      normalizeGuestSenderIdString(o.guest_id) ?? normalizeGuestSenderIdString(o.guestId) ?? null
+    );
+  };
+  return (
+    tryObj(row) ??
+    tryObj(msgRecord) ??
+    tryObj(structuredPayload) ??
+    null
+  );
+}
+
+function coerceMessageBodyText(row: Record<string, unknown>): string {
+  const text = row.message;
+  if (typeof text === "string") return text;
+  const msg = row.msg;
+  if (msg && typeof msg === "object" && !Array.isArray(msg)) {
+    const nested = msg as Record<string, unknown>;
+    const t = nested.text ?? nested.body ?? nested.message;
+    if (typeof t === "string") return t;
+  }
+  return "";
+}
+
+function permissionBodyFallback(meta: Record<string, unknown> | null): string {
+  if (!meta || Object.keys(meta).length === 0) return "(Permission traffic)";
+  const status =
+    typeof meta.status === "string"
+      ? meta.status
+      : typeof meta.state === "string"
+        ? meta.state
+        : "";
+  const action =
+    typeof meta.action === "string"
+      ? meta.action
+      : typeof meta.event === "string"
+        ? meta.event
+        : "";
+  const code =
+    typeof meta.code === "string"
+      ? meta.code
+      : typeof meta.reason === "string"
+        ? meta.reason
+        : "";
+  const parts = [
+    status && `status: ${status}`,
+    action && `event: ${action}`,
+    code && `detail: ${code}`,
+  ].filter(Boolean);
+  if (parts.length) return parts.join(" · ");
+  try {
+    return JSON.stringify(meta);
+  } catch {
+    return "(Permission traffic)";
+  }
 }
 
 export function normalizeMessage(raw: unknown): Message | null {
@@ -68,29 +180,67 @@ export function normalizeMessage(raw: unknown): Message | null {
   const senderId = row.sender_id;
   const createdAt = row.created_at;
   const visibility = row.visibility;
-  const text = row.message;
   const directType = toMessageType(row.type ?? row.message_type);
   const fallbackType = toLegacyTypeFromVisibility(visibility);
   const type = directType ?? fallbackType ?? "UNKNOWN";
   const meta = {
     category: getMessageTypeCategory(type),
     scope: getMessageScopeForType(type),
-  } as const;
+  };
 
   const zoneId = typeof zoneIdRaw === "string" ? zoneIdRaw : String(zoneIdRaw ?? "");
   const senderIdValue =
-    typeof senderId === "number" ? senderId : typeof row.owner_id === "number" ? row.owner_id : null;
-  const textValue =
-    typeof text === "string"
-      ? text
-      : row.msg && typeof row.msg === "object"
-        ? String((row.msg as Record<string, unknown>).text ?? "")
-        : "";
+    normalizeOwnerNumericId(senderId) ??
+    normalizeOwnerNumericId(row.owner_id) ??
+    normalizeOwnerNumericId(row.user_id);
+
+  const msgRecord =
+    row.msg != null && typeof row.msg === "object" && !Array.isArray(row.msg)
+      ? (row.msg as Record<string, unknown>)
+      : null;
+  const rowStructuredPayload =
+    row.raw_payload != null && typeof row.raw_payload === "object" && !Array.isArray(row.raw_payload)
+      ? (row.raw_payload as Record<string, unknown>)
+      : null;
+
+  const guestSenderIdRaw = extractGuestSenderId(row, msgRecord, rowStructuredPayload);
+
+  let textValue = coerceMessageBodyText(row).trim();
+
+  const allowSyntheticBody = type === "PERMISSION" || type === "CHAT";
+  if (textValue.length === 0 && allowSyntheticBody && msgRecord) {
+    textValue = permissionBodyFallback(msgRecord).trim();
+  }
+  if (textValue.length === 0 && type === "PERMISSION") {
+    textValue = permissionBodyFallback(rowStructuredPayload).trim();
+  }
+  /** placeholder so UI list/detail can render; avoids dropping valid backend PERMISSION envelopes */
+  if (textValue.length === 0 && type === "PERMISSION") {
+    textValue = "(Permission traffic)";
+  }
+  /** CHAT envelopes sometimes carry only structured metadata */
+  if (textValue.length === 0 && type === "CHAT") {
+    textValue = "(Chat)";
+  }
+
+  const raw_payload: Record<string, unknown> | null = msgRecord ?? rowStructuredPayload;
+
+  const accessGuestChannel = type === "CHAT" || type === "PERMISSION";
+  const useGuestLogicalSender =
+    senderIdValue == null && accessGuestChannel && guestSenderIdRaw != null;
+
+  const resolvedSenderId = useGuestLogicalSender
+    ? GUEST_LOGICAL_SENDER_ID
+    : senderIdValue;
+
+  if (useGuestLogicalSender && guestSenderIdRaw) {
+    logGuestLogicalSenderAccepted(id, guestSenderIdRaw);
+  }
 
   if (
     id == null ||
     zoneId.trim().length === 0 ||
-    senderIdValue == null ||
+    resolvedSenderId == null ||
     typeof createdAt !== "string" ||
     textValue.trim().length === 0
   ) {
@@ -101,18 +251,35 @@ export function normalizeMessage(raw: unknown): Message | null {
   if (!directType && !fallbackType) {
     logMalformedMessageWarning(id, "type missing; using UNKNOWN");
   }
+  let category = meta.category;
+  let scope = meta.scope;
+  if (type === "CHAT" || type === "PERMISSION") {
+    const categoryHint =
+      coerceMessageCategory(row.category) ??
+      (msgRecord ? coerceMessageCategory(msgRecord.category) : null) ??
+      (rowStructuredPayload ? coerceMessageCategory(rowStructuredPayload.category) : null);
+    if (categoryHint) category = categoryHint;
+    const scopeHint =
+      coerceMessageScope(row.scope) ??
+      (msgRecord ? coerceMessageScope(msgRecord.scope) : null) ??
+      (rowStructuredPayload ? coerceMessageScope(rowStructuredPayload.scope) : null);
+    if (scopeHint) scope = scopeHint;
+  }
   return {
     id: String(id),
     zone_id: zoneId,
-    sender_id: senderIdValue,
+    sender_id: resolvedSenderId,
     receiver_id: receiver,
     type,
-    category: meta.category,
-    scope: meta.scope,
-    visibility: meta.scope,
+    category,
+    scope,
+    visibility: scope,
     message: textValue,
     created_at: createdAt,
-    raw_payload: row.msg && typeof row.msg === "object" ? (row.msg as Record<string, unknown>) : null,
+    raw_payload,
+    ...(useGuestLogicalSender && guestSenderIdRaw
+      ? { guest_sender_id: guestSenderIdRaw }
+      : {}),
   };
 }
 
@@ -121,6 +288,12 @@ function messagesListUrl(): string {
   return `${base}/messages/`;
 }
 
+/**
+ * Member message inbox. Server: `GET ${VITE_API_BASE_URL}/messages/` with query params
+ * `owner_id` (required), optional `other_owner_id`, `skip`, `limit`. PERMISSION / CHAT for
+ * Access Zone should appear here when the backend mirrors those rows for the signed-in owner;
+ * rows with empty legacy `message` text are surfaced when typed as PERMISSION / CHAT.
+ */
 export async function listMessages(params: ListMessagesParams) {
   const result = await request<unknown[]>({
     method: "GET",
@@ -131,6 +304,11 @@ export async function listMessages(params: ListMessagesParams) {
     ...result,
     data: (result.data ?? []).map(normalizeMessage).filter((m): m is Message => Boolean(m)),
   };
+}
+
+/** List/detail label: guest-originated Access rows use a stable "Guest" label instead of the numeric placeholder. */
+export function formatMessageSenderLabel(message: Message): string {
+  return message.guest_sender_id != null ? "Guest" : String(message.sender_id);
 }
 
 export async function sendMessage(payload: SendMessagePayload) {

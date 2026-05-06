@@ -32,8 +32,9 @@ export function GuestAccessQrSection({ zoneId, compact = false }: Props) {
             <QrCode className="h-4 w-4" /> Guest access QR
           </p>
           <p className="mt-1 max-w-xl text-sm text-slate-400">
-            Issue time-bound links (<span className="font-mono">/access?gt=…</span>) from
-            the Guest QR page. Requires an administrator account for this zone.
+            View and manage the reusable primary guest QR (
+            <span className="font-mono">/access?gt=…</span>) for this zone.
+            Requires an administrator account.
           </p>
         </div>
         <Link

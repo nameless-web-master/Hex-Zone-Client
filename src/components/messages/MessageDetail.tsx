@@ -1,4 +1,4 @@
-import type { Message } from "../../services/api/messages";
+import { formatMessageSenderLabel, type Message } from "../../services/api/messages";
 import { toMessageTypeLabel } from "../../lib/messageTypes";
 
 export function MessageDetail({ message }: { message: Message | null }) {
@@ -24,7 +24,7 @@ export function MessageDetail({ message }: { message: Message | null }) {
               Scope {message.scope}
             </span>
             <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-300">
-              sender {message.sender_id}
+              sender {formatMessageSenderLabel(message)}
             </span>
             {message.receiver_id != null && (
               <span className="rounded-full bg-slate-900 px-2 py-1 text-slate-300">

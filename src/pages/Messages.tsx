@@ -131,6 +131,25 @@ export default function Messages() {
   }, [effectiveZoneForGuests]);
 
   useEffect(() => {
+    const z = effectiveZoneForGuests.trim();
+    if (!z) return;
+    const intervalId = window.setInterval(() => {
+      void listGuestRequestsForZone(z).then((res) => {
+        if (res.error) return;
+        setGuestRows(res.data);
+      });
+    }, 18_000);
+    return () => window.clearInterval(intervalId);
+  }, [effectiveZoneForGuests]);
+
+  const accessZonePermissionCount = useMemo(
+    () => messages.reduce((acc, m) => acc + (m.type === "PERMISSION" ? 1 : 0), 0),
+    [messages],
+  );
+  const showMessagesIntegrationBanner =
+    import.meta.env.VITE_SHOW_MESSAGES_INTEGRATION_BANNER === "true";
+
+  useEffect(() => {
     setComposeReceiverId("");
   }, [composeType]);
   const selectableReceivers = useMemo(() => {
@@ -194,6 +213,7 @@ export default function Messages() {
     });
   }, [owners, members, composeZoneId, ownerId]);
 
+  /** Defaults (all zones / all scope / category / type) intentionally include CHAT: meta is Access + private from MESSAGE_TYPE_META. */
   const filteredMessages = useMemo(() => {
     return messages.filter((message) => {
       if (zoneFilter !== "all" && message.zone_id !== zoneFilter) return false;
@@ -212,11 +232,16 @@ export default function Messages() {
       }
       const q = search.trim().toLowerCase();
       if (!q) return true;
+      const guestSenderMatch =
+        message.guest_sender_id != null &&
+        (message.guest_sender_id.toLowerCase().includes(q) ||
+          (q.length > 0 && "guest".startsWith(q)));
       return (
         message.message.toLowerCase().includes(q) ||
         message.zone_id.toLowerCase().includes(q) ||
         String(message.sender_id).includes(q) ||
-        String(message.receiver_id ?? "").includes(q)
+        String(message.receiver_id ?? "").includes(q) ||
+        guestSenderMatch
       );
     });
   }, [messages, zoneFilter, scopeFilter, categoryFilter, typeFilter, dateFilter, search]);
@@ -233,7 +258,7 @@ export default function Messages() {
     const accessGuest = isAccessGuestChannelType(composeType);
     if (accessGuest) {
       if (!composeReceiverId.trim()) {
-        setComposeStatus("Pick a guest for PERMISSION or CHAT.");
+        setComposeStatus("Pick a guest for CHAT.");
         return;
       }
     } else if (isPrivateMessageType(composeType) && !composeReceiverId) {
@@ -274,6 +299,25 @@ export default function Messages() {
   );
 
   const groupedTypeOptions = useMemo(() => groupMessageTypesForUI(), []);
+  const composeTypeOptions = useMemo(
+    () =>
+      groupedTypeOptions
+        .map((group) => ({
+          ...group,
+          options: group.options.filter((option) => option.type !== "PERMISSION"),
+        }))
+        .filter((group) => group.options.length > 0),
+    [groupedTypeOptions],
+  );
+  const [composeTypeNotice, setComposeTypeNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (composeType !== "PERMISSION") return;
+    setComposeType("CHAT");
+    setComposeTypeNotice(
+      "PERMISSION events are automatic from guest access workflow; switched to CHAT.",
+    );
+  }, [composeType]);
   const composeScope = getMessageScopeForType(composeType);
   const composeCategory = getMessageTypeCategory(composeType);
 
@@ -290,6 +334,53 @@ export default function Messages() {
           <span className="text-slate-500">WebSocket with polling fallback.</span>
         </p>
       </div>
+
+      <details className="rounded-2xl border border-slate-700/85 bg-slate-950/75 text-sm text-slate-300">
+        <summary className="cursor-pointer select-none px-4 py-2.5 [&::-webkit-details-marker]:hidden">
+          <span className="font-medium text-slate-100">Access info</span>
+          <span className="mt-1 block text-xs text-slate-500">
+            {accessZonePermissionCount > 0
+              ? "This inbox batch includes PERMISSION rows; expand only if you need integration notes."
+              : "Quiet summary — expand for details or enable verbose banner via env."}
+          </span>
+        </summary>
+        <div className="space-y-3 border-t border-slate-800/80 px-4 py-3 text-xs leading-relaxed text-slate-400">
+          {showMessagesIntegrationBanner ? (
+            <>
+              <p>
+                Access Zone permission traffic belongs in each owner&apos;s stream from{" "}
+                <span className="font-mono text-[11px] text-slate-200">
+                  GET {import.meta.env.VITE_API_BASE_URL?.replace(/\/+$/, "") || "…"}
+                  /messages/
+                </span>{" "}
+                (query <span className="font-mono text-[11px] text-slate-200">owner_id</span>, same as chat).{" "}
+                <span className="font-medium text-slate-200">Permission traffic requires the backend to mirror</span>{" "}
+                PERMISSION rows into member <span className="font-mono text-[11px] text-slate-200">/messages/</span>;
+                this UI does not fabricate PERMISSION envelopes. Fallback: monitor the{" "}
+                <strong className="font-medium text-slate-100">Guest access requests</strong> panel below (polls the
+                guest-requests list for the resolved zone—status only, not a substitute for full message history).
+              </p>
+              {accessZonePermissionCount === 0 ? (
+                <p className="text-slate-500">
+                  No PERMISSION type entries in your current inbox batch—if approvals still feel silent, confirm
+                  mirroring or use the Access panel while the API team aligns. CHAT from guests must also be mirrored
+                  into <span className="font-mono text-slate-300">/messages/</span> for admins to see the same thread as
+                  the guest app.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p>
+              CHAT and PERMISSION lines appear here when the API includes them in{" "}
+              <span className="font-mono text-slate-300">GET /messages/</span> for your owner. The{" "}
+              <span className="font-medium text-slate-200">Guest access requests</span> block below is a lightweight
+              status poll, not the full history. Set{" "}
+              <span className="font-mono text-slate-300">VITE_SHOW_MESSAGES_INTEGRATION_BANNER=true</span> for verbose
+              contract notes.
+            </p>
+          )}
+        </div>
+      </details>
 
       <div className="grid gap-4 rounded-[2rem] border border-slate-800/80 bg-slate-950/80 p-5 lg:grid-cols-6">
         <select
@@ -353,14 +444,62 @@ export default function Messages() {
         />
       </div>
 
+      <details className="rounded-2xl border border-slate-800/80 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
+        <summary className="cursor-pointer select-none font-medium text-slate-100">
+          Guest access requests (zone:{" "}
+          <span className="font-mono text-[#00E5D1]">{effectiveZoneForGuests || "—"}</span>
+          ){guestsLoading ? <span className="ml-2 text-xs font-normal text-slate-500">loading…</span> : null}
+        </summary>
+        {guestListError ? (
+          <p className="mt-2 text-xs text-amber-200">
+            {guestListError} Configure <span className="font-mono">VITE_ADMIN_GUEST_REQUESTS_LIST_URL</span> when your
+            path differs from the contract default.
+          </p>
+        ) : (
+          <div className="mt-3 max-h-[220px] overflow-auto rounded-lg border border-slate-800/80 bg-slate-950/90">
+            {guestRows.length === 0 ? (
+              <p className="p-4 text-xs text-slate-500">
+                No rows for this zone. Incoming guest QR flows should appear once the backend exposes guest-requests for the
+                member API.
+              </p>
+            ) : (
+              <table className="w-full border-collapse text-left text-xs">
+                <thead className="sticky top-0 bg-slate-950/95 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                  <tr>
+                    <th className="border-b border-slate-800 p-2">Guest</th>
+                    <th className="border-b border-slate-800 p-2">Id</th>
+                    <th className="border-b border-slate-800 p-2">Expect</th>
+                    <th className="border-b border-slate-800 p-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {guestRows.map((r) => (
+                    <tr key={r.id} className="border-b border-slate-800/60 text-slate-200 last:border-b-0">
+                      <td className="p-2">{r.guestName ?? "—"}</td>
+                      <td className="max-w-[140px] break-all p-2 font-mono text-[11px] text-slate-400">{r.id}</td>
+                      <td className="p-2 capitalize text-slate-400">{r.expectation}</td>
+                      <td className="p-2 font-medium text-[#00E5D1]">{r.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+        <p className="mt-2 text-[11px] text-slate-500">
+          Refresh: on zone change, plus background poll every ~18s. Compose CHAT via guest ids from this list when
+          shown.
+        </p>
+      </details>
+
       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-3">
-          {/* {error && (
-            <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-              {error}
-            </p>
-          )}
-           <p className="text-sm text-slate-500">{loading ? "Syncing messages..." : ""}</p> */}
+          {error ? (
+            <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
+          ) : null}
+          {loading ? (
+            <p className="text-sm text-slate-500">Syncing messages…</p>
+          ) : null}
           <MessageList
             messages={filteredMessages}
             activeId={activeMessageId}
@@ -376,10 +515,13 @@ export default function Messages() {
             <label className="block text-xs font-medium text-slate-400">Message Type</label>
             <select
               value={composeType}
-              onChange={(e) => setComposeType(e.target.value as MessageType)}
+              onChange={(e) => {
+                setComposeTypeNotice(null);
+                setComposeType(e.target.value as MessageType);
+              }}
               className="w-full rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2.5 text-sm text-slate-100"
             >
-              {groupedTypeOptions.map((group) => (
+              {composeTypeOptions.map((group) => (
                 <optgroup key={group.category} label={group.category}>
                   {group.options.map((option) => (
                     <option key={option.type} value={option.type}>
@@ -398,11 +540,14 @@ export default function Messages() {
               </p>
               <p className="col-span-2 text-slate-500">Scope is determined by selected type.</p>
             </div>
+            {composeTypeNotice ? (
+              <p className="text-xs text-amber-200">{composeTypeNotice}</p>
+            ) : null}
             {isAccessGuestChannelType(composeType) && (
               <>
                 <p className="text-xs text-slate-500">
-                  PERMISSION and CHAT here go to <span className="font-medium text-slate-300">guests</span> in this
-                  zone only (not member-to-member). Zone for list:{" "}
+                  CHAT here goes to <span className="font-medium text-slate-300">guests</span> in this zone only (not
+                  member-to-member). Zone for list:{" "}
                   <span className="font-mono text-slate-400">
                     {effectiveZoneForGuests || "—"}
                   </span>

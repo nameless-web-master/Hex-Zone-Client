@@ -11,7 +11,7 @@ import type {
 /** POST target for PERMISSION payloads; override with `VITE_GUEST_ACCESS_PERMISSION_PATH` (e.g. `/api/access/permission`). */
 export function guestAccessPermissionPath(): string {
   const env = String(import.meta.env.VITE_GUEST_ACCESS_PERMISSION_PATH ?? "").trim();
-  return env.length > 0 ? env : "/message-feature/access/permission";
+  return env.length > 0 ? env : "/api/access/permission";
 }
 
 const scanAuthUrl = (): string | null => {
@@ -534,6 +534,23 @@ function parseAnonymousAccessFailure(body: unknown): { code?: string; message: s
   return { message: "Request failed" };
 }
 
+export function mapGuestAccessErrorCode(code?: string, fallback?: string): string {
+  const c = String(code ?? "").trim().toUpperCase();
+  if (c === "PERMISSION_MANUAL_DISABLED") {
+    return "Permission events are automatic from guest access workflow.";
+  }
+  if (c === "GUEST_MESSAGE_TYPE_NOT_ALLOWED") {
+    return "Guests can send CHAT only";
+  }
+  if (c === "INVALID_GUEST_TOKEN" || c === "TOKEN_ZONE_MISMATCH") {
+    return "This invite link is invalid. Ask your host for a new guest invite.";
+  }
+  if (c === "GUEST_NOT_AUTHORIZED_FOR_ZONE") {
+    return "Access denied for this zone. Please choose an authorized zone.";
+  }
+  return fallback ?? "Request failed";
+}
+
 export type AnonymousGuestPermissionBody = {
   /** Issued guest QR token from `?gt=` (preferred for new flows). */
   guest_qr_token?: string;
@@ -573,7 +590,11 @@ export async function submitAnonymousGuestPermission(
     });
     if (res.status >= 400) {
       const { code, message } = parseAnonymousAccessFailure(res.data);
-      return { ok: false, errorCode: code, message };
+      return {
+        ok: false,
+        errorCode: code,
+        message: mapGuestAccessErrorCode(code, message),
+      };
     }
     const data = unwrapEnvelope(res.data);
     const row =
@@ -645,6 +666,39 @@ export async function submitAnonymousGuestPermission(
 
 export type GuestSessionPollStatus = "PENDING" | "APPROVED" | "REJECTED" | "UNKNOWN";
 
+export type ApiEnvelopeStatus = "success" | "error";
+
+export type PrimaryGuestQrTokenResponse = {
+  zone_id: string;
+  url?: string | null;
+  path_with_query?: string | null;
+  token_suffix?: string | null;
+};
+
+export type GuestAccessPermissionSubmitResponse = {
+  status: "EXPECTED" | "UNEXPECTED";
+  message: string;
+  guest_id?: string;
+  zone_id?: string;
+};
+
+export type GuestAccessSessionPollResponse = {
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  message?: string;
+  exchange_code?: string;
+  exchange_expires_at?: string;
+};
+
+export type GuestRequestListItem = {
+  id: string;
+  zone_id: string;
+  guest_name?: string;
+  hid?: string;
+  created_at?: string;
+  expectation: "expected" | "unexpected";
+  status: "ARRIVED" | "PENDING" | "APPROVED" | "REJECTED";
+};
+
 export type GuestAccessSessionPollResult = {
   status: GuestSessionPollStatus;
   message?: string;
@@ -673,11 +727,10 @@ export async function pollGuestAccessSession(
       validateStatus: () => true,
     });
     if (res.status >= 400) {
+      const { code, message } = parseAnonymousAccessFailure(res.data);
       return {
         status: "UNKNOWN",
-        error:
-          parseAnonymousAccessFailure(res.data).message ||
-          `Request failed (${res.status})`,
+        error: mapGuestAccessErrorCode(code, message || `Request failed (${res.status})`),
       };
     }
     const data = unwrapEnvelope(res.data);

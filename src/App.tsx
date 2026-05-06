@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import Navbar from "./components/Navbar";
 import { Footer } from "./components/Footer";
@@ -33,90 +33,105 @@ function ProtectedRoute({ children }: { children: JSX.Element }) {
   return token ? children : <Navigate to="/login" replace />;
 }
 
+function AppMain() {
+  const { pathname } = useLocation();
+  const guestWideLayout = pathname.startsWith("/guest/");
+  return (
+    <main
+      className={[
+        "mx-auto flex-1 pt-28",
+        guestWideLayout
+          ? "w-full min-w-0 max-w-none px-4 sm:px-6 lg:px-10"
+          : "max-w-7xl px-5",
+      ].join(" ")}
+    >
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/access" element={<GuestAccess />} />
+        <Route
+          path="/guest/dashboard"
+          element={
+            <GuestProtectedRoute>
+              <GuestDashboard />
+            </GuestProtectedRoute>
+          }
+        />
+        <Route
+          path="/guest/messages"
+          element={
+            <GuestProtectedRoute>
+              <GuestMessages />
+            </GuestProtectedRoute>
+          }
+        />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<CreateAccount />} />
+        <Route path="/join" element={<JoinWithQr />} />
+        <Route path="/guest-arrival/scan" element={<GuestArrivalScan />} />
+        <Route path="/guest-arrival" element={<GuestArrival />} />
+        <Route path="/api" element={<ApiDocs />} />
+        <Route
+          path="/devices"
+          element={
+            <ProtectedRoute>
+              <DeviceManager />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/messages"
+          element={
+            <ProtectedRoute>
+              <Messages />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/members"
+          element={
+            <ProtectedRoute>
+              <Members />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/qr"
+          element={
+            <ProtectedRoute>
+              <QrInvite />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/guest-access-qr"
+          element={
+            <ProtectedRoute>
+              <GuestAccessQr />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </main>
+  );
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <AppStateProvider>
         <MessageFeatureBootstrap />
-        <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+        <div className="min-h-screen bg-slate-950 text-slate-100 flex min-w-0 flex-col overflow-x-hidden">
           <Navbar />
-          <main className="mx-auto max-w-7xl px-5 pt-28 flex-1">
-            <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route path="/access" element={<GuestAccess />} />
-              <Route
-                path="/guest/dashboard"
-                element={
-                  <GuestProtectedRoute>
-                    <GuestDashboard />
-                  </GuestProtectedRoute>
-                }
-              />
-              <Route
-                path="/guest/messages"
-                element={
-                  <GuestProtectedRoute>
-                    <GuestMessages />
-                  </GuestProtectedRoute>
-                }
-              />
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<CreateAccount />} />
-              <Route path="/join" element={<JoinWithQr />} />
-              <Route path="/guest-arrival/scan" element={<GuestArrivalScan />} />
-              <Route path="/guest-arrival" element={<GuestArrival />} />
-              <Route path="/api" element={<ApiDocs />} />
-              <Route
-                path="/devices"
-                element={
-                  <ProtectedRoute>
-                    <DeviceManager />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/messages"
-                element={
-                  <ProtectedRoute>
-                    <Messages />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/members"
-                element={
-                  <ProtectedRoute>
-                    <Members />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/qr"
-                element={
-                  <ProtectedRoute>
-                    <QrInvite />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/guest-access-qr"
-                element={
-                  <ProtectedRoute>
-                    <GuestAccessQr />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/dashboard"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </main>
+          <AppMain />
           <Footer />
         </div>
       </AppStateProvider>

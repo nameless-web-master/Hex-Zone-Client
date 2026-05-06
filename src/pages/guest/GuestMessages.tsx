@@ -11,17 +11,10 @@ import {
   type GuestPeer,
 } from "../../services/api/guestMessages";
 import { guestApiBasePath } from "../../services/api/guestSession";
+import { mapGuestAccessErrorCode } from "../../services/api/accessPermissions";
 
 const POLL_MS = 4000;
 const THREAD_LIMIT = 80;
-
-function allowedComposerTypes(allowed: string[]): ("CHAT" | "PERMISSION")[] {
-  const u = new Set(allowed.map((a) => a.toUpperCase()));
-  const out: ("CHAT" | "PERMISSION")[] = [];
-  if (u.has("CHAT")) out.push("CHAT");
-  if (u.has("PERMISSION")) out.push("PERMISSION");
-  return out.length ? out : ["CHAT"];
-}
 
 export default function GuestMessages() {
   const [searchParams] = useSearchParams();
@@ -44,7 +37,6 @@ export default function GuestMessages() {
   const [loadingThread, setLoadingThread] = useState(false);
   const [sending, setSending] = useState(false);
   const [text, setText] = useState("");
-  const [composeType, setComposeType] = useState<"CHAT" | "PERMISSION">("CHAT");
 
   useEffect(() => {
     let alive = true;
@@ -52,9 +44,7 @@ export default function GuestMessages() {
       const m = await fetchGuestMe();
       if (!alive || m.error || !m.data) return;
       setAllowedTypes(
-        m.data.allowed_message_types?.length
-          ? m.data.allowed_message_types
-          : ["PERMISSION", "CHAT"],
+        m.data.allowed_message_types?.length ? m.data.allowed_message_types : ["CHAT"],
       );
       const zs = m.data.zone_ids?.length ? m.data.zone_ids : [];
       setZones(zs);
@@ -69,13 +59,10 @@ export default function GuestMessages() {
     };
   }, [zoneFromQuery]);
 
-  const composerTypes = useMemo(() => allowedComposerTypes(allowedTypes), [allowedTypes]);
-
-  useEffect(() => {
-    if (!composerTypes.includes(composeType)) {
-      setComposeType(composerTypes[0] ?? "CHAT");
-    }
-  }, [composerTypes, composeType]);
+  const guestCanChat = useMemo(() => {
+    if (!allowedTypes.length) return true;
+    return allowedTypes.map((x) => x.toUpperCase()).includes("CHAT");
+  }, [allowedTypes]);
 
   const loadPeers = useCallback(async () => {
     const z = zoneId.trim();
@@ -138,17 +125,26 @@ export default function GuestMessages() {
     const to = peerId.trim();
     const body = text.trim();
     if (!z || !to || !body) return;
+    if (!guestCanChat) {
+      setMsgError("Guests can send CHAT only");
+      return;
+    }
     setSending(true);
     setMsgError(null);
     const res = await sendGuestMessage({
       zone_id: z,
-      type: composeType,
+      type: "CHAT",
       text: body,
       to_owner_id: to,
     });
     setSending(false);
     if (res.error) {
-      setMsgError(res.error);
+      if (/GUEST_NOT_AUTHORIZED_FOR_ZONE/.test(res.error)) {
+        setZoneId("");
+      }
+      const codeMatch = res.error.match(/\b([A-Z_]{3,})\b/);
+      const mapped = mapGuestAccessErrorCode(codeMatch?.[1], res.error);
+      setMsgError(mapped);
       return;
     }
     setText("");
@@ -159,13 +155,17 @@ export default function GuestMessages() {
     zoneId.trim().length > 0
       ? `${guestApiBasePath()}/zones/${encodeURIComponent(zoneId.trim())}/peers`
       : "";
+  const noHostsHint =
+    zoneId.trim().length > 0
+      ? `No hosts available — backend GET ${guestApiBasePath()}/zones/${encodeURIComponent(zoneId.trim())}/peers must return zone staff.`
+      : "";
 
   return (
-    <section className="mx-auto max-w-3xl space-y-6">
+    <section className="mx-auto max-w-5xl space-y-6">
       <header>
         <h1 className="text-2xl font-semibold text-slate-100">Guest messages</h1>
         <p className="text-sm text-slate-400">
-          Only message types your host allows: {allowedTypes.join(", ") || "—"}
+          Guests can send CHAT only. Permission events are automatic.
         </p>
         <div className="mt-3 rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-xs text-slate-400">
           Access Zone flow (PERMISSION / CHAT): choose a zone, then pick a{" "}
@@ -178,7 +178,7 @@ export default function GuestMessages() {
         </div>
       </header>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-[minmax(260px,360px)_minmax(0,1fr)]">
         <div className="space-y-3 rounded-xl border border-slate-800/80 bg-slate-950/60 p-4">
           <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
             Zone
@@ -207,7 +207,7 @@ export default function GuestMessages() {
           ) : null}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Peer (zone host / admin)
+              Hosts in this zone
             </label>
             <button
               type="button"
@@ -219,6 +219,31 @@ export default function GuestMessages() {
               Refresh peers
             </button>
           </div>
+
+          {peers.length > 0 ? (
+            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+              {peers.map((p) => {
+                const selected = peerId === p.owner_id;
+                return (
+                  <li key={p.owner_id}>
+                    <button
+                      type="button"
+                      onClick={() => setPeerId(p.owner_id)}
+                      className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition ${
+                        selected
+                          ? "border-[#00E5D1]/55 bg-[#00E5D1]/12 text-slate-100"
+                          : "border-slate-800 bg-slate-900/60 text-slate-300 hover:border-slate-600"
+                      }`}
+                    >
+                      <p className="font-medium text-slate-100">{p.display_name || "Host"}</p>
+                      <p className="mt-0.5 font-mono text-[10px] text-slate-500">{p.owner_id}</p>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+
           <select
             value={peerId}
             onChange={(ev) => setPeerId(ev.target.value)}
@@ -232,11 +257,13 @@ export default function GuestMessages() {
             ))}
           </select>
           {!loadingPeers && !peersError && zoneId.trim() && peers.length === 0 ? (
-            <p className="text-xs text-amber-200/90">
-              No peers returned. Your server must list zone administrators on{" "}
-              <span className="font-mono text-amber-100/90">{peersPathHint}</span>. Give the backend team{" "}
-              <span className="font-mono">docs/BACKEND_ACCESS_ZONE_FULL_CONTRACT.md</span> (section 4.3).
-            </p>
+            <div className="space-y-1 rounded-md border border-amber-500/25 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+              <p>{noHostsHint}</p>
+              <p className="text-[11px] text-amber-100/85">
+                Full contract:{" "}
+                <span className="font-mono text-amber-50/95">docs/BACKEND_ACCESS_ZONE_FULL_CONTRACT.md</span> (section 4.3).
+              </p>
+            </div>
           ) : null}
         </div>
 
@@ -252,18 +279,29 @@ export default function GuestMessages() {
             </p>
           ) : (
             <ul className="mt-2 flex-1 space-y-2 overflow-y-auto text-sm">
-              {messages.map((m) => (
-                <li
-                  key={m.id}
-                  className="rounded-md border border-slate-800/80 bg-slate-900/50 px-3 py-2"
-                >
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500">
-                    {m.type}
-                    {m.created_at ? ` · ${m.created_at}` : ""}
-                  </p>
-                  <p className="text-slate-200">{m.text ?? "—"}</p>
-                </li>
-              ))}
+              {messages.map((m) => {
+                const t = String(m.type ?? "").toUpperCase();
+                const isPermission = t === "PERMISSION";
+                return (
+                  <li
+                    key={m.id}
+                    className={`rounded-md border px-3 py-2 ${
+                      isPermission
+                        ? "border-amber-500/30 bg-amber-950/20"
+                        : "border-slate-800/80 bg-slate-900/50"
+                    }`}
+                  >
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                      {t}
+                      {m.created_at ? ` · ${m.created_at}` : ""}
+                      {isPermission ? (
+                        <span className="ml-2 text-amber-200/95"> · read-only in thread</span>
+                      ) : null}
+                    </p>
+                    <p className={isPermission ? "text-amber-50/95" : "text-slate-200"}>{m.text ?? "—"}</p>
+                  </li>
+                );
+              })}
             </ul>
           )}
           {msgError ? <p className="mt-2 text-xs text-rose-300">{msgError}</p> : null}
@@ -273,34 +311,18 @@ export default function GuestMessages() {
       {peerId ? (
         <form onSubmit={(ev) => void handleSend(ev)} className="space-y-3 rounded-xl border border-slate-800/80 bg-slate-950/60 p-4">
           <div className="flex flex-wrap items-end gap-3">
-            {composerTypes.length > 1 ? (
-              <div>
-                <label className="mb-1 block text-xs uppercase text-slate-500">Type</label>
-                <select
-                  value={composeType}
-                  onChange={(ev) => setComposeType(ev.target.value as "CHAT" | "PERMISSION")}
-                  className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
-                >
-                  {composerTypes.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
             <div className="min-w-[200px] flex-1">
               <label className="mb-1 block text-xs uppercase text-slate-500">Message</label>
               <input
                 value={text}
                 onChange={(ev) => setText(ev.target.value)}
-                placeholder={composeType === "CHAT" ? "Write a message…" : "Permission note…"}
+                placeholder="Write a message…"
                 className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
               />
             </div>
             <button
               type="submit"
-              disabled={sending || !text.trim()}
+              disabled={sending || !text.trim() || !guestCanChat}
               className="inline-flex items-center gap-2 rounded-md bg-[#00E5D1] px-4 py-2 text-sm font-bold text-[#0B0E11] disabled:opacity-50"
             >
               {sending ? (
@@ -311,9 +333,7 @@ export default function GuestMessages() {
               Send
             </button>
           </div>
-          {composerTypes.length === 1 && composerTypes[0] === "CHAT" ? (
-            <p className="text-xs text-slate-500">Sending as CHAT (only type enabled for your access).</p>
-          ) : null}
+          <p className="text-xs text-slate-500">Sending as CHAT.</p>
         </form>
       ) : null}
     </section>

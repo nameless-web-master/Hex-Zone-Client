@@ -9,6 +9,7 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { resolveGuestBrowserDeviceId } from "../lib/guestDeviceId";
 import {
+  mapGuestAccessErrorCode,
   pollGuestAccessSession,
   submitAnonymousGuestPermission,
 } from "../services/api/accessPermissions";
@@ -99,9 +100,7 @@ function clearStoredWait() {
 }
 
 function formatError(err: { errorCode?: string; message: string }): string {
-  const c = err.errorCode?.trim();
-  if (c) return `${c}: ${err.message}`;
-  return err.message;
+  return mapGuestAccessErrorCode(err.errorCode, err.message);
 }
 
 export default function GuestAccess() {
