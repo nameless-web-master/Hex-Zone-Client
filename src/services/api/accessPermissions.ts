@@ -127,6 +127,11 @@ export type NormalizedGuestPermissionDecision = {
   pollingNeeded?: boolean;
   approvalStatus?: GuestApprovalStatus | "NONE";
   nextInstructions?: string;
+  /** Session poll id when backend aligns with anonymous `/access` contract. */
+  guestId?: string;
+  zoneId?: string;
+  exchange_code?: string;
+  exchange_expires_at?: string;
   raw?: MessageFeaturePermissionDecision;
 };
 
@@ -268,6 +273,14 @@ export function normalizeGuestPermissionResponse(raw: unknown): NormalizedGuestP
     row.notify_member_assist ?? row.notifyMemberAssist,
   );
 
+  const guestId = readString(row, ["guest_id", "guestId"]);
+  const zoneId = readZoneIdFromRow(row);
+  const exchange_code = readString(row, ["exchange_code", "exchangeCode"]);
+  const exchange_expires_at = readString(row, [
+    "exchange_expires_at",
+    "exchangeExpiresAt",
+  ]);
+
   return {
     expectation,
     scheduleMatch: Boolean(legacy?.schedule_match ?? row.schedule_match),
@@ -278,6 +291,10 @@ export function normalizeGuestPermissionResponse(raw: unknown): NormalizedGuestP
     pollingNeeded: pollingNeeded || approvalStatus === "PENDING",
     approvalStatus,
     nextInstructions: readString(row, ["next_instructions", "instructions"]),
+    ...(guestId ? { guestId } : {}),
+    ...(zoneId ? { zoneId } : {}),
+    ...(exchange_code ? { exchange_code } : {}),
+    ...(exchange_expires_at ? { exchange_expires_at } : {}),
     raw: legacy && legacy.decision ? (legacy as MessageFeaturePermissionDecision) : undefined,
   };
 }
@@ -572,6 +589,9 @@ export type AnonymousGuestPermissionResult =
       guestId?: string;
       /** Present when backend echoes zone; needed for GET /session/… when `zid` is not in URL. */
       zoneId?: string;
+      /** When present, client can exchange immediately without polling session. */
+      exchange_code?: string;
+      exchange_expires_at?: string;
     }
   | { ok: false; errorCode?: string; message: string };
 
@@ -605,6 +625,20 @@ export async function submitAnonymousGuestPermission(
     const message = readString(row, ["message", "detail", "msg"]) ?? "";
     const guestId = readString(row, ["guest_id", "guestId"]);
     const respZoneId = readZoneIdFromRow(row);
+    const exchange_code = readString(row, ["exchange_code", "exchangeCode"]);
+    const exchange_expires_at = readString(row, [
+      "exchange_expires_at",
+      "exchangeExpiresAt",
+    ]);
+    const exchangeFields =
+      exchange_code && exchange_code.trim()
+        ? {
+            exchange_code: exchange_code.trim(),
+            ...(exchange_expires_at?.trim()
+              ? { exchange_expires_at: exchange_expires_at.trim() }
+              : {}),
+          }
+        : {};
 
     if (st === "EXPECTED") {
       return {
@@ -613,6 +647,7 @@ export async function submitAnonymousGuestPermission(
         message: message || "You are expected.",
         guestId,
         zoneId: respZoneId,
+        ...exchangeFields,
       };
     }
     if (st === "UNEXPECTED") {
@@ -622,6 +657,7 @@ export async function submitAnonymousGuestPermission(
         message: message || "Waiting for approval.",
         guestId,
         zoneId: respZoneId,
+        ...exchangeFields,
       };
     }
 
@@ -633,6 +669,7 @@ export async function submitAnonymousGuestPermission(
         message: message || "You are expected.",
         guestId,
         zoneId: respZoneId,
+        ...exchangeFields,
       };
     }
     if (
@@ -646,6 +683,7 @@ export async function submitAnonymousGuestPermission(
         message: message || "Waiting for approval.",
         guestId,
         zoneId: respZoneId,
+        ...exchangeFields,
       };
     }
 

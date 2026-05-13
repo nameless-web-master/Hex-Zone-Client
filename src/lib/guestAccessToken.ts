@@ -1,3 +1,5 @@
+import { resetGuestSession401RedirectGuard } from "./guestSessionAuthRedirect";
+
 /** Guest JWT for `/api/guest/*` — never mix with `zoneweaver_token` (member). */
 
 export const GUEST_ACCESS_TOKEN_KEY = "zoneweaver_guest_access_token";
@@ -39,6 +41,7 @@ export function getGuestSessionMeta(): GuestSessionMeta | null {
 
 export function persistGuestAccessToken(token: string): void {
   sessionStorage.setItem(GUEST_ACCESS_TOKEN_KEY, token.trim());
+  resetGuestSession401RedirectGuard();
 }
 
 export function persistGuestSessionMeta(meta: GuestSessionMeta): void {

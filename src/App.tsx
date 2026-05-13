@@ -1,4 +1,6 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { registerGuestSessionAuthNavigate } from "./lib/guestSessionAuthRedirect";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import Navbar from "./components/Navbar";
 import { Footer } from "./components/Footer";
@@ -16,6 +18,7 @@ import GuestArrival from "./pages/GuestArrival";
 import GuestArrivalScan from "./pages/GuestArrivalScan";
 import GuestAccess from "./pages/GuestAccess";
 import GuestAccessQr from "./pages/GuestAccessQr";
+import GuestPasses from "./pages/GuestPasses";
 import GuestProtectedRoute from "./components/guest/GuestProtectedRoute";
 import GuestDashboard from "./pages/guest/GuestDashboard";
 import GuestMessages from "./pages/guest/GuestMessages";
@@ -34,7 +37,12 @@ function ProtectedRoute({ children }: { children: JSX.Element }) {
 }
 
 function AppMain() {
+  const navigate = useNavigate();
   const { pathname } = useLocation();
+  useEffect(() => {
+    registerGuestSessionAuthNavigate(navigate);
+    return () => registerGuestSessionAuthNavigate(null);
+  }, [navigate]);
   const guestWideLayout = pathname.startsWith("/guest/");
   return (
     <main
@@ -107,6 +115,14 @@ function AppMain() {
           element={
             <ProtectedRoute>
               <GuestAccessQr />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/guest-passes"
+          element={
+            <ProtectedRoute>
+              <GuestPasses />
             </ProtectedRoute>
           }
         />

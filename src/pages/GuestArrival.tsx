@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   Loader2,
   MapPin,
@@ -12,14 +12,20 @@ import {
   buildGuestArrivalPermissionPayload,
   type GuestArrivalPosition,
 } from "../lib/guestArrival";
+import { resolveGuestBrowserDeviceId } from "../lib/guestDeviceId";
 import {
   normalizeGuestPermissionResponse,
+  pollGuestAccessSession,
   pollGuestApprovalStatus,
   requestGuestScanAuthToken,
   resolveMappedDeviceApiKey,
   submitGuestArrivalPermission,
   type GuestApprovalStatus,
 } from "../services/api/accessPermissions";
+import {
+  exchangeGuestSession,
+  persistGuestSessionAfterExchange,
+} from "../services/api/guestSession";
 
 type FeedbackTone = "neutral" | "success" | "warning" | "error";
 
@@ -34,10 +40,24 @@ type ArrivalPhase =
   | {
       id: "unexpected_pending";
       requestId?: string;
+      /** GET `/api/access/session/{guest_id}` when present (same contract as `/access`). */
+      pollGuestId?: string;
+      pollZoneId?: string;
     }
   | {
       id: "awaiting_approval";
       requestId?: string;
+      pollGuestId?: string;
+      pollZoneId?: string;
+    }
+  | {
+      id: "guest_dashboard_signin";
+      guestId: string;
+      pollZoneId: string;
+      instructions?: string;
+      exchange_code?: string;
+      exchange_expires_at?: string;
+      pollMessage?: string;
     }
   | {
       id: "approved";
@@ -57,6 +77,11 @@ const SCAN_AUTH_MISSING_MESSAGE =
   "Client error: missing scan auth header. Please update the app and retry.";
 const REAUTH_PROMPT_MESSAGE =
   "Your scan authorization could not be refreshed. Please scan the guest QR again.";
+
+const SESSION_POLL_MS = 3500;
+
+const SESSION_APPROVED_NO_EXCHANGE_COPY =
+  "The server approved this visit but did not send a sign-in code (exchange_code). The guest app needs that field on the session response, or on the permission response. Ask your host to update the API.";
 
 function buildBrowserDerivedHid(): string {
   const seed = `${navigator.userAgent}|${navigator.language}|${navigator.platform}`;
@@ -109,6 +134,19 @@ function pickProceedWait(
   return { proceed: proceed || "Please proceed.", wait: waitLine };
 }
 
+function arrivalSessionGuestId(
+  decision: ReturnType<typeof normalizeGuestPermissionResponse>,
+): string {
+  return (decision.guestId ?? decision.requestId ?? "").trim();
+}
+
+function arrivalSessionZoneId(
+  decision: ReturnType<typeof normalizeGuestPermissionResponse>,
+  fallbackZone: string,
+): string {
+  return (decision.zoneId ?? fallbackZone).trim();
+}
+
 export default function GuestArrival() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -125,6 +163,8 @@ export default function GuestArrival() {
   const [locating, setLocating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<{ text: string; tone: FeedbackTone } | null>(null);
+  const [exchangeBusy, setExchangeBusy] = useState(false);
+  const [exchangeError, setExchangeError] = useState<string | null>(null);
 
   const [scannedZoneId, setScannedZoneId] = useState("");
   const [scannedToken, setScannedToken] = useState("");
@@ -194,6 +234,47 @@ export default function GuestArrival() {
     }
   };
 
+  const runGuestSessionExchange = useCallback(
+    async (
+      guestId: string,
+      pollZoneId: string,
+      exchangeCode: string,
+      isCancelled?: () => boolean,
+    ) => {
+      const gid = guestId.trim();
+      const z = pollZoneId.trim();
+      const code = exchangeCode.trim();
+      if (!gid || !z || !code) return false;
+      setExchangeBusy(true);
+      setExchangeError(null);
+      const device = resolveGuestBrowserDeviceId();
+      const ex = await exchangeGuestSession({
+        guest_id: gid,
+        zone_id: z,
+        exchange_code: code,
+        ...(device ? { device_id: device } : {}),
+      });
+      if (isCancelled?.()) {
+        setExchangeBusy(false);
+        return false;
+      }
+      setExchangeBusy(false);
+      if (ex.error || !ex.data) {
+        setExchangeError(
+          ex.error ??
+            (ex.status === 404
+              ? "Guest session API is not available yet (404). Ask your host to update the server."
+              : "Could not start guest session."),
+        );
+        return false;
+      }
+      persistGuestSessionAfterExchange(ex.data, z);
+      navigate("/guest/dashboard", { replace: true });
+      return true;
+    },
+    [navigate],
+  );
+
   useEffect(() => {
     if (phase.id !== "awaiting_approval" && phase.id !== "unexpected_pending") return;
     const requestId = phase.requestId?.trim();
@@ -202,7 +283,23 @@ export default function GuestArrival() {
     const step = async () => {
       const res = await pollGuestApprovalStatus(requestId);
       if (!alive || !res.data) return;
-      mapPollToPhase(res.data.status);
+      if (res.data.status === "REJECTED") {
+        setPhase({ id: "rejected" });
+        return;
+      }
+      if (res.data.status !== "APPROVED") return;
+      const gid = phase.pollGuestId?.trim() || requestId;
+      const z = phase.pollZoneId?.trim() || effectiveZoneId.trim();
+      if (gid && z) {
+        setPhase({
+          id: "guest_dashboard_signin",
+          guestId: gid,
+          pollZoneId: z,
+          instructions: "Your host approved your visit. Opening the guest app…",
+        });
+      } else {
+        mapPollToPhase(res.data.status);
+      }
     };
     void step();
     const handle = window.setInterval(() => void step(), 9000);
@@ -210,7 +307,106 @@ export default function GuestArrival() {
       alive = false;
       window.clearInterval(handle);
     };
-  }, [phase]);
+  }, [
+    phase.id,
+    phase.id === "awaiting_approval" || phase.id === "unexpected_pending"
+      ? phase.requestId ?? ""
+      : "",
+    phase.id === "awaiting_approval" || phase.id === "unexpected_pending"
+      ? phase.pollGuestId ?? ""
+      : "",
+    phase.id === "awaiting_approval" || phase.id === "unexpected_pending"
+      ? phase.pollZoneId ?? ""
+      : "",
+    effectiveZoneId,
+  ]);
+
+  useEffect(() => {
+    const shouldPoll =
+      phase.id === "guest_dashboard_signin" && !phase.exchange_code?.trim();
+    if (!shouldPoll) return;
+    const guestId = phase.guestId.trim();
+    const pollZoneId = phase.pollZoneId.trim();
+    if (!guestId || !pollZoneId) return;
+
+    let alive = true;
+    const tick = async () => {
+      const res = await pollGuestAccessSession(guestId, pollZoneId);
+      if (!alive) return;
+      if (res.error) {
+        setPhase((p) =>
+          p.id === "guest_dashboard_signin" && !p.exchange_code?.trim()
+            ? { ...p, pollMessage: res.error ?? undefined }
+            : p,
+        );
+        return;
+      }
+      if (res.status === "APPROVED") {
+        setPhase((p) => {
+          if (p.id !== "guest_dashboard_signin") return p;
+          if (res.exchange_code) {
+            return {
+              ...p,
+              exchange_code: res.exchange_code,
+              ...(res.exchange_expires_at
+                ? { exchange_expires_at: res.exchange_expires_at }
+                : {}),
+            };
+          }
+          return {
+            ...p,
+            pollMessage: SESSION_APPROVED_NO_EXCHANGE_COPY,
+          };
+        });
+        return;
+      }
+      if (res.status === "REJECTED") {
+        setPhase({ id: "rejected" });
+        return;
+      }
+      if (res.message) {
+        setPhase((p) =>
+          p.id === "guest_dashboard_signin" && !p.exchange_code?.trim()
+            ? { ...p, pollMessage: res.message }
+            : p,
+        );
+      }
+    };
+
+    void tick();
+    const handle = window.setInterval(() => void tick(), SESSION_POLL_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(handle);
+    };
+  }, [
+    phase.id,
+    phase.id === "guest_dashboard_signin" ? phase.guestId : "",
+    phase.id === "guest_dashboard_signin" ? phase.pollZoneId : "",
+    phase.id === "guest_dashboard_signin" ? (phase.exchange_code ?? "").trim() : "",
+  ]);
+
+  useEffect(() => {
+    if (phase.id !== "guest_dashboard_signin") return;
+    const code = phase.exchange_code?.trim();
+    if (!code) return;
+    const gid = phase.guestId.trim();
+    const z = phase.pollZoneId.trim();
+    if (!gid || !z) return;
+
+    let cancelled = false;
+    void runGuestSessionExchange(gid, z, code, () => cancelled);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    phase.id,
+    phase.id === "guest_dashboard_signin" ? phase.guestId : "",
+    phase.id === "guest_dashboard_signin" ? phase.pollZoneId : "",
+    phase.id === "guest_dashboard_signin" ? (phase.exchange_code ?? "").trim() : "",
+    runGuestSessionExchange,
+  ]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -315,7 +511,31 @@ export default function GuestArrival() {
       return;
     }
 
+    const sessionGid = arrivalSessionGuestId(decision);
+    const sessionZ = arrivalSessionZoneId(decision, effectiveZoneId);
+
     if (decision.expectation === "expected") {
+      if (sessionGid && sessionZ) {
+        setExchangeError(null);
+        setPhase({
+          id: "guest_dashboard_signin",
+          guestId: sessionGid,
+          pollZoneId: sessionZ,
+          instructions:
+            decision.nextInstructions?.trim() ||
+            pickProceedWait(decision).proceed ||
+            "You are expected — opening the guest app.",
+          ...(decision.exchange_code?.trim()
+            ? {
+                exchange_code: decision.exchange_code.trim(),
+                ...(decision.exchange_expires_at?.trim()
+                  ? { exchange_expires_at: decision.exchange_expires_at.trim() }
+                  : {}),
+              }
+            : {}),
+        });
+        return;
+      }
       const { proceed, wait } = pickProceedWait(decision);
       setPhase({
         id: "expected_ok",
@@ -327,6 +547,26 @@ export default function GuestArrival() {
     }
 
     if (decision.approvalStatus === "APPROVED") {
+      if (sessionGid && sessionZ) {
+        setExchangeError(null);
+        setPhase({
+          id: "guest_dashboard_signin",
+          guestId: sessionGid,
+          pollZoneId: sessionZ,
+          instructions:
+            decision.nextInstructions ||
+            "Access granted. Follow your host’s directions.",
+          ...(decision.exchange_code?.trim()
+            ? {
+                exchange_code: decision.exchange_code.trim(),
+                ...(decision.exchange_expires_at?.trim()
+                  ? { exchange_expires_at: decision.exchange_expires_at.trim() }
+                  : {}),
+              }
+            : {}),
+        });
+        return;
+      }
       setPhase({
         id: "approved",
         instructions:
@@ -344,6 +584,8 @@ export default function GuestArrival() {
       setPhase({
         id: "awaiting_approval",
         requestId: decision.requestId,
+        pollGuestId: sessionGid || decision.requestId?.trim() || undefined,
+        pollZoneId: sessionZ || undefined,
       });
       return;
     }
@@ -351,12 +593,25 @@ export default function GuestArrival() {
     setPhase({
       id: "unexpected_pending",
       requestId: decision.requestId,
+      pollGuestId: sessionGid || decision.requestId?.trim() || undefined,
+      pollZoneId: sessionZ || undefined,
     });
   };
 
   const resetToForm = () => {
     setPhase({ id: "form" });
     setLocalError(null);
+    setExchangeError(null);
+    setExchangeBusy(false);
+  };
+
+  const handleContinueToGuestDashboard = () => {
+    if (phase.id !== "guest_dashboard_signin" || !phase.exchange_code?.trim()) return;
+    void runGuestSessionExchange(
+      phase.guestId.trim(),
+      phase.pollZoneId.trim(),
+      phase.exchange_code.trim(),
+    );
   };
 
   return (
@@ -540,6 +795,68 @@ export default function GuestArrival() {
             Scan another QR
           </button>
         </output>
+      )}
+
+      {phase.id === "guest_dashboard_signin" && (
+        <div className="space-y-3 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-4 text-emerald-50">
+          <p className="text-lg font-semibold">Guest sign-in</p>
+          {phase.instructions ? (
+            <p className="text-sm leading-relaxed text-emerald-100/90">{phase.instructions}</p>
+          ) : null}
+
+          {!phase.exchange_code?.trim() ? (
+            <div className="space-y-2 rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-3 py-3 text-sm text-emerald-100/90">
+              <p className="flex items-center gap-2 font-medium text-emerald-100">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Finishing sign-in…
+              </p>
+              <p className="text-emerald-100/80">
+                Keep this page open while we fetch your sign-in code from the server.
+              </p>
+              {phase.pollMessage ? (
+                <p className="font-mono text-[11px] text-emerald-200/80">{phase.pollMessage}</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-2 text-sm">
+              {exchangeBusy ? (
+                <p className="flex items-center gap-2 font-medium text-emerald-100">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Opening guest dashboard…
+                </p>
+              ) : null}
+              {phase.exchange_expires_at && !exchangeBusy ? (
+                <p className="text-emerald-100/80">
+                  Sign-in code expires:{" "}
+                  <span className="font-mono text-emerald-50">
+                    {new Date(phase.exchange_expires_at).toLocaleString()}
+                  </span>
+                </p>
+              ) : null}
+              {exchangeError ? (
+                <p className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-rose-100">
+                  {exchangeError}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                disabled={exchangeBusy}
+                onClick={() => void handleContinueToGuestDashboard()}
+                className="w-full rounded-md bg-[#00E5D1] px-4 py-2.5 text-sm font-bold text-[#0B0E11] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {exchangeBusy ? "Signing in…" : "Continue to guest dashboard"}
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={resetToForm}
+            className="text-xs font-medium uppercase tracking-[0.14em] text-emerald-200/90 hover:underline"
+          >
+            Dismiss / start over
+          </button>
+        </div>
       )}
 
       {phase.id === "approved" && (

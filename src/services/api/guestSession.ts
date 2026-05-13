@@ -1,11 +1,16 @@
 import axios, { AxiosError, type AxiosInstance } from "axios";
 import { API_BASE_URL } from "./client";
 import {
+  clearGuestAccessSession,
   getGuestAccessToken,
   persistGuestAccessToken,
   persistGuestSessionMeta,
   type GuestSessionMeta,
 } from "../../lib/guestAccessToken";
+import {
+  completeGuestSessionAuthFailureRedirect,
+  guestSession401TryBeginRedirect,
+} from "../../lib/guestSessionAuthRedirect";
 
 /** Anonymous POST only — never attaches member or guest Bearer. */
 export const guestExchangeAxios: AxiosInstance = axios.create({
@@ -26,6 +31,17 @@ guestSessionAxios.interceptors.request.use((config) => {
   }
   return config;
 });
+
+guestSessionAxios.interceptors.response.use(
+  (res) => res,
+  (error: AxiosError) => {
+    if (error.response?.status === 401 && guestSession401TryBeginRedirect()) {
+      clearGuestAccessSession();
+      completeGuestSessionAuthFailureRedirect();
+    }
+    return Promise.reject(error);
+  },
+);
 
 export function guestSessionExchangeUrl(): string {
   const raw = String(import.meta.env.VITE_GUEST_SESSION_EXCHANGE_URL ?? "").trim();

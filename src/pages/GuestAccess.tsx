@@ -1,4 +1,11 @@
-import { FormEvent, useEffect, useLayoutEffect, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
+import { consumeGuestAuthExpiredNoticeFlash } from "../lib/guestSessionAuthRedirect";
 import {
   CheckCircle,
   Loader2,
@@ -105,6 +112,7 @@ function formatError(err: { errorCode?: string; message: string }): string {
 
 export default function GuestAccess() {
   const navigate = useNavigate();
+  const [authExpiredNotice, setAuthExpiredNotice] = useState(false);
   const [searchParams] = useSearchParams();
   const zid = String(searchParams.get("zid") ?? "").trim();
   const gt = String(searchParams.get("gt") ?? "").trim();
@@ -126,6 +134,12 @@ export default function GuestAccess() {
   const [formError, setFormError] = useState<string | null>(null);
   const [exchangeBusy, setExchangeBusy] = useState(false);
   const [exchangeError, setExchangeError] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    if (consumeGuestAuthExpiredNoticeFlash()) {
+      setAuthExpiredNotice(true);
+    }
+  }, []);
 
   useEffect(() => {
     setEventId(eidFromQuery);
@@ -209,6 +223,16 @@ export default function GuestAccess() {
           return p;
         });
         if (res.exchange_code) return;
+        setPhase((p) =>
+          p.id === "approved" && !p.exchange_code?.trim()
+            ? {
+                ...p,
+                pollMessage:
+                  "The server approved this visit but did not send a sign-in code (exchange_code). The guest app needs that field on the session response, or on the first permission response. Ask your host to update the API.",
+              }
+            : p,
+        );
+        return;
       }
       if (res.status === "REJECTED") {
         clearStoredWait();
@@ -239,6 +263,71 @@ export default function GuestAccess() {
     phase.id === "approved" && !phase.exchange_code?.trim() ? phase.guestId : "",
     phase.id === "approved" && !phase.exchange_code?.trim() ? phase.pollZoneId : "",
     phase.id === "approved" ? (phase.exchange_code ?? "").trim() : "",
+  ]);
+
+  const runGuestSessionExchange = useCallback(
+    async (
+      guestId: string,
+      pollZoneId: string,
+      exchangeCode: string,
+      isCancelled?: () => boolean,
+    ) => {
+      const gid = guestId.trim();
+      const z = pollZoneId.trim();
+      const code = exchangeCode.trim();
+      if (!gid || !z || !code) return false;
+      setExchangeBusy(true);
+      setExchangeError(null);
+      const effectiveDevice = useAutoDeviceId
+        ? resolveGuestBrowserDeviceId()
+        : deviceId.trim() || undefined;
+      const ex = await exchangeGuestSession({
+        guest_id: gid,
+        zone_id: z,
+        exchange_code: code,
+        ...(effectiveDevice ? { device_id: effectiveDevice } : {}),
+      });
+      if (isCancelled?.()) {
+        setExchangeBusy(false);
+        return false;
+      }
+      setExchangeBusy(false);
+      if (ex.error || !ex.data) {
+        setExchangeError(
+          ex.error ??
+            (ex.status === 404
+              ? "Guest session API is not available yet (404). Ask your host to update the server."
+              : "Could not start guest session."),
+        );
+        return false;
+      }
+      persistGuestSessionAfterExchange(ex.data, z);
+      navigate("/guest/dashboard", { replace: true });
+      return true;
+    },
+    [deviceId, navigate, useAutoDeviceId],
+  );
+
+  useEffect(() => {
+    if (phase.id !== "approved") return;
+    const code = phase.exchange_code?.trim();
+    if (!code) return;
+    const gid = phase.guestId.trim();
+    const z = phase.pollZoneId.trim();
+    if (!gid || !z) return;
+
+    let cancelled = false;
+    void runGuestSessionExchange(gid, z, code, () => cancelled);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    phase.id,
+    phase.id === "approved" ? phase.guestId : "",
+    phase.id === "approved" ? phase.pollZoneId : "",
+    phase.id === "approved" ? (phase.exchange_code ?? "").trim() : "",
+    runGuestSessionExchange,
   ]);
 
   const captureLocation = () => {
@@ -303,7 +392,25 @@ export default function GuestAccess() {
     }
 
     if (result.status === "EXPECTED") {
-      setPhase({ id: "expected", message: result.message });
+      const expectedGuestId = result.guestId?.trim();
+      const expectedPollZone = (result.zoneId ?? zid).trim();
+      if (expectedGuestId && expectedPollZone) {
+        clearStoredWait();
+        setPhase({
+          id: "approved",
+          message: result.message || "You are expected — access granted.",
+          guestId: expectedGuestId,
+          pollZoneId: expectedPollZone,
+          ...(result.exchange_code?.trim()
+            ? { exchange_code: result.exchange_code.trim() }
+            : {}),
+          ...(result.exchange_expires_at?.trim()
+            ? { exchange_expires_at: result.exchange_expires_at.trim() }
+            : {}),
+        });
+      } else {
+        setPhase({ id: "expected", message: result.message });
+      }
       return;
     }
 
@@ -340,34 +447,24 @@ export default function GuestAccess() {
 
   const handleContinueToGuestApp = async () => {
     if (phase.id !== "approved" || !phase.exchange_code?.trim()) return;
-    setExchangeBusy(true);
-    setExchangeError(null);
-    const effectiveDevice = useAutoDeviceId
-      ? resolveGuestBrowserDeviceId()
-      : deviceId.trim() || undefined;
-    const ex = await exchangeGuestSession({
-      guest_id: phase.guestId.trim(),
-      zone_id: phase.pollZoneId.trim(),
-      exchange_code: phase.exchange_code.trim(),
-      ...(effectiveDevice ? { device_id: effectiveDevice } : {}),
-    });
-    setExchangeBusy(false);
-    if (ex.error || !ex.data) {
-      setExchangeError(
-        ex.error ??
-          (ex.status === 404
-            ? "Guest session API is not available yet (404). Ask your host to update the server."
-            : "Could not start guest session."),
-      );
-      return;
-    }
-    persistGuestSessionAfterExchange(ex.data, phase.pollZoneId.trim());
-    navigate("/guest/dashboard", { replace: true });
+    await runGuestSessionExchange(
+      phase.guestId.trim(),
+      phase.pollZoneId.trim(),
+      phase.exchange_code.trim(),
+    );
   };
 
   if (!hasInvite) {
     return (
       <section className="mx-auto max-w-lg space-y-4 rounded-3xl border border-slate-800/80 bg-slate-950/80 p-6">
+        {authExpiredNotice ? (
+          <p
+            role="status"
+            className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100"
+          >
+            Your access was revoked or expired. Sign in again.
+          </p>
+        ) : null}
         <p className="inline-flex items-center gap-2 rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-200">
           <QrCode className="h-4 w-4" /> Guest access
         </p>
@@ -406,6 +503,15 @@ export default function GuestAccess() {
           ) : null}
         </p>
       </header>
+
+      {authExpiredNotice ? (
+        <p
+          role="status"
+          className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100"
+        >
+          Your access was revoked or expired. Sign in again.
+        </p>
+      ) : null}
 
       {phase.id === "form" && (
         <form onSubmit={(ev) => void handleSubmit(ev)} className="space-y-4">
@@ -565,11 +671,11 @@ export default function GuestAccess() {
             <div className="space-y-2 rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-3 py-3 text-sm text-emerald-100/90">
               <p className="flex items-center gap-2 font-medium text-emerald-100">
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                Waiting for server support
+                Finishing sign-in…
               </p>
               <p className="text-emerald-100/80">
-                Approval is confirmed; this app is waiting for a one-time sign-in code from the
-                server. Keep this page open, or try again later.
+                Your visit is verified. This page will open the guest app as soon as the server
+                provides a sign-in code. Keep it open for a few seconds.
               </p>
               {phase.pollMessage ? (
                 <p className="font-mono text-[11px] text-emerald-200/70">{phase.pollMessage}</p>
@@ -577,7 +683,13 @@ export default function GuestAccess() {
             </div>
           ) : (
             <div className="space-y-2 text-sm">
-              {phase.exchange_expires_at ? (
+              {exchangeBusy ? (
+                <p className="flex items-center gap-2 font-medium text-emerald-100">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Opening guest dashboard…
+                </p>
+              ) : null}
+              {phase.exchange_expires_at && !exchangeBusy ? (
                 <p className="text-emerald-100/80">
                   Sign-in code expires:{" "}
                   <span className="font-mono text-emerald-50">
