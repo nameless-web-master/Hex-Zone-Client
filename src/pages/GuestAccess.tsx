@@ -110,6 +110,18 @@ function formatError(err: { errorCode?: string; message: string }): string {
   return mapGuestAccessErrorCode(err.errorCode, err.message);
 }
 
+/** Avoid showing the same line twice when submit + poll return identical `message`. */
+function pollMessageIfDistinct(
+  primary: string | undefined,
+  poll: string | undefined,
+): string | undefined {
+  const p = poll?.trim();
+  if (!p) return undefined;
+  const base = primary?.trim();
+  if (base && p === base) return undefined;
+  return p;
+}
+
 export default function GuestAccess() {
   const navigate = useNavigate();
   const [authExpiredNotice, setAuthExpiredNotice] = useState(false);
@@ -638,9 +650,10 @@ export default function GuestAccess() {
             approval
           </p>
           <p className="text-sm text-slate-300">{phase.serverMessage}</p>
-          {phase.pollMessage ? (
-            <p className="text-sm text-slate-400">{phase.pollMessage}</p>
-          ) : null}
+          {(() => {
+            const line = pollMessageIfDistinct(phase.serverMessage, phase.pollMessage);
+            return line ? <p className="text-sm text-slate-400">{line}</p> : null;
+          })()}
           <div className="flex items-center gap-2 text-sm text-slate-500">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
             Checking status…
@@ -677,9 +690,12 @@ export default function GuestAccess() {
                 Your visit is verified. This page will open the guest app as soon as the server
                 provides a sign-in code. Keep it open for a few seconds.
               </p>
-              {phase.pollMessage ? (
-                <p className="font-mono text-[11px] text-emerald-200/70">{phase.pollMessage}</p>
-              ) : null}
+              {(() => {
+                const line = pollMessageIfDistinct(phase.message, phase.pollMessage);
+                return line ? (
+                  <p className="font-mono text-[11px] text-emerald-200/70">{line}</p>
+                ) : null;
+              })()}
             </div>
           ) : (
             <div className="space-y-2 text-sm">
