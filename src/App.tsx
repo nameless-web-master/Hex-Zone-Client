@@ -18,6 +18,7 @@ import GuestArrival from "./pages/GuestArrival";
 import GuestArrivalScan from "./pages/GuestArrivalScan";
 import GuestAccess from "./pages/GuestAccess";
 import GuestAccessQr from "./pages/GuestAccessQr";
+import GuestArrivalMessagesAdmin from "./pages/GuestArrivalMessagesAdmin";
 import GuestPasses from "./pages/GuestPasses";
 import GuestProtectedRoute from "./components/guest/GuestProtectedRoute";
 import GuestDashboard from "./pages/guest/GuestDashboard";
@@ -118,6 +119,14 @@ function AppMain() {
           element={
             <ProtectedRoute>
               <GuestAccessQr />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/guest-arrival-messages"
+          element={
+            <ProtectedRoute>
+              <GuestArrivalMessagesAdmin />
             </ProtectedRoute>
           }
         />

@@ -42,6 +42,19 @@ Guest UI routes: `/guest/dashboard`, `/guest/messages`. Until the backend ships 
 
 Member **Messages** compose for **PERMISSION** and **CHAT** uses the guest list from `GET` guest-requests for the zone and sends `guest_id` on `POST /messages` (not `receiver_id`). **PRIVATE** still uses owner `receiver_id`. Align field names with your server if needed.
 
+### Guest arrival messages (admin)
+
+Administrators can edit zone-level copy for the guest access flow at **`/guest-arrival-messages`**. The UI calls the Access Zone HTTP API using the same **`VITE_API_BASE_URL`** and **member JWT** (`Authorization: Bearer …` from login) as other `/api/access/...` routes.
+
+- **GET** `/api/access/zones/{zone_id}/guest-arrival-messages` — load current overrides and server defaults.
+- **PATCH** (default) or **PUT** `/api/access/zones/{zone_id}/guest-arrival-messages` — save; set `VITE_GUEST_ARRIVAL_MESSAGES_SAVE_METHOD=put` if your backend only supports PUT.
+
+Optional overrides:
+
+- **`VITE_GUEST_ARRIVAL_MESSAGES_PATH_TEMPLATE`** — e.g. `/api/access/zones/{zone_id}/guest-arrival-messages` (placeholders `{zone_id}` / `{zoneId}` are URL-encoded).
+
+**Auth:** same as other zone admin tools (e.g. Guest QR): the signed-in user must be an **administrator** for the zone; the backend should enforce zone scope on its side (return **403** if the token cannot manage that zone). Guest apps are unchanged; they keep consuming `message` from the existing permission and poll APIs.
+
 ## Testing
 
 Run unit tests with:

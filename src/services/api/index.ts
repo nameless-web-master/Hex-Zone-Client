@@ -5,3 +5,4 @@ export * from "./messageFeature";
 export * from "./members";
 export * from "./devices";
 export * from "./client";
+export * from "./guestArrivalMessages";

@@ -66,6 +66,13 @@ export default function GuestAccessQr() {
           <Link to="/qr" className="text-[#00E5D1] hover:underline">
             QR invite
           </Link>
+          . To edit the short messages guests see when requesting access, open{" "}
+          <Link
+            to="/guest-arrival-messages"
+            className="text-[#00E5D1] hover:underline"
+          >
+            Guest arrival messages
+          </Link>
           .
         </p>
       </div>
