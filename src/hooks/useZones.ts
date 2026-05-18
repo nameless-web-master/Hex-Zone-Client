@@ -73,8 +73,18 @@ function normalizeSavedZone(raw: unknown): SavedZone | null {
     row.h3_cells ?? row.h3Cells ?? config?.h3Cells ?? config?.h3_cells,
   );
 
+  const geometryObj =
+    row.geometry && typeof row.geometry === "object"
+      ? (row.geometry as Record<string, unknown>)
+      : null;
   const rawPolygon =
-    row.geo_fence_polygon ?? row.geometry ?? config?.geometry ?? row.polygons;
+    row.geo_fence_polygon ??
+    geometryObj?.geo_fence_polygon ??
+    (geometryObj?.type === "Polygon" || geometryObj?.type === "MultiPolygon"
+      ? geometryObj
+      : null) ??
+    config?.geo_fence_polygon ??
+    row.polygons;
   const rawGeoFence = row.geo_fence ?? config?.geo_fence;
   const geometry =
     row.geometry && typeof row.geometry === "object"

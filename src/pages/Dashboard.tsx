@@ -23,8 +23,12 @@ import {
   AUTH_MAP_DEFAULT_CENTER,
 } from "../lib/h3";
 import {
+  circleToPolygonRing,
+  deletePolygonOuterVertex,
   distanceMeters,
   findPolygonContainingPoint,
+  insertPolygonOuterVertex,
+  movePolygonOuterVertex,
   newPolygonId,
   pointInPolygon,
   ringsNearlyClosed,
@@ -41,6 +45,8 @@ import {
   cornersFromCircle,
   cornersFromH3Cell,
   cornersFromPolygonShape,
+  cornersFromPolygonShapes,
+  mergeFitBoundsCorners,
 } from "../lib/mapBounds";
 import {
   photonPlaceReferenceId,
@@ -49,8 +55,18 @@ import {
 
 const accent = "#00E5D1";
 const panel = "bg-[#151a20]";
+/** Distinct map colors for saved zones (active zone uses gold highlight). */
+const ZONE_MAP_COLORS = [
+  "#00E5D1",
+  "#06B6D4",
+  "#A78BFA",
+  "#F59E0B",
+  "#22C55E",
+  "#F472B6",
+] as const;
 
 type MapperMode = "h3" | "polygon";
+type GeofenceDrawTool = "polygon" | "circle";
 type ActiveTool = null | "measure";
 type ZoneTypeMode =
   | "geofence"
@@ -271,16 +287,37 @@ function normalizeGeoFencePolygonValue(value: unknown): unknown {
     "geometry" in (value as Record<string, unknown>)
   ) {
     const g = (value as { geometry?: unknown }).geometry;
-    if (g && typeof g === "object") return g;
+    if (g && typeof g === "object") return normalizeGeoFencePolygonValue(g);
+  }
+  if (
+    value &&
+    typeof value === "object" &&
+    "geo_fence_polygon" in (value as Record<string, unknown>)
+  ) {
+    const nested = (value as { geo_fence_polygon?: unknown }).geo_fence_polygon;
+    if (nested != null) return normalizeGeoFencePolygonValue(nested);
   }
   return value;
 }
 
+function zoneGeoFenceRaw(zone: SavedZone): unknown {
+  if (zone.geo_fence_polygon != null) return zone.geo_fence_polygon;
+  const geoFence = (zone as Record<string, unknown>).geoFencePolygon;
+  if (geoFence != null) return geoFence;
+  const geometry =
+    zone.geometry && typeof zone.geometry === "object"
+      ? (zone.geometry as Record<string, unknown>)
+      : null;
+  if (!geometry) return null;
+  if (geometry.geo_fence_polygon != null) return geometry.geo_fence_polygon;
+  if (geometry.type === "Polygon" || geometry.type === "MultiPolygon") {
+    return geometry;
+  }
+  return null;
+}
+
 function zoneToPolygons(zone: SavedZone): GeoPolygonShape[] {
-  const rawGeo =
-    zone.geo_fence_polygon ??
-    (zone as Record<string, unknown>).geoFencePolygon ??
-    null;
+  const rawGeo = zoneGeoFenceRaw(zone);
   const normalizedGeo = normalizeGeoFencePolygonValue(rawGeo);
 
   const fromGeoJson = geoJsonPolygonToShapes(normalizedGeo);
@@ -758,6 +795,15 @@ export default function Dashboard() {
   const [polygons, setPolygons] = useState<GeoPolygonShape[]>([]);
   const [draftRing, setDraftRing] = useState<LatLng[]>([]);
   const [drawingActive, setDrawingActive] = useState(false);
+  const [geofenceDrawTool, setGeofenceDrawTool] =
+    useState<GeofenceDrawTool>("polygon");
+  const [selectedPolygonId, setSelectedPolygonId] = useState<string | null>(
+    null,
+  );
+  const [circleDraft, setCircleDraft] = useState<{
+    center: LatLng;
+    radiusMeters: number;
+  } | null>(null);
   const [holeParentId, setHoleParentId] = useState<string | null>(null);
 
   const [grayscaleMap, setGrayscaleMap] = useState(false);
@@ -787,7 +833,7 @@ export default function Dashboard() {
     null,
   );
   const [isCreatingNewZone, setIsCreatingNewZone] = useState(false);
-  const [showAllZones, setShowAllZones] = useState(false);
+  const [showAllZones, setShowAllZones] = useState(true);
   const [activeSavedZoneEditable, setActiveSavedZoneEditable] =
     useState<boolean>(false);
   const [removedCellIds, setRemovedCellIds] = useState<Set<string>>(
@@ -1008,20 +1054,27 @@ export default function Dashboard() {
         setMeasureLabelKm(null);
       }
       if (drawingActive) {
-        setDraftRing((d) => {
-          if (d.length <= 1) {
-            setDrawingActive(false);
-            setHoleParentId(null);
-            return [];
-          }
-          return d.slice(0, -1);
-        });
+        if (circleDraft) {
+          setCircleDraft(null);
+          setDrawingActive(false);
+        } else {
+          setDraftRing((d) => {
+            if (d.length <= 1) {
+              setDrawingActive(false);
+              setHoleParentId(null);
+              return [];
+            }
+            return d.slice(0, -1);
+          });
+        }
+      } else if (selectedPolygonId) {
+        setSelectedPolygonId(null);
       }
       setContextMenu(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeTool, drawingActive]);
+  }, [activeTool, circleDraft, drawingActive, selectedPolygonId]);
 
   const toggleCell = useCallback((cell: string) => {
     setSelectedCells((current) =>
@@ -1263,7 +1316,34 @@ export default function Dashboard() {
         return;
       }
 
-      if (mapperMode === "polygon" && drawingActive) {
+      if (
+        mapperMode === "polygon" &&
+        drawingActive &&
+        geofenceDrawTool === "circle"
+      ) {
+        if (!circleDraft) {
+          setCircleDraft({ center: [lat, lng], radiusMeters: 0 });
+          setSaveStatus("Move the mouse to set radius, then click again to finish.");
+          return;
+        }
+        const radiusMeters = Math.max(
+          distanceMeters(circleDraft.center, [lat, lng]),
+          5,
+        );
+        const outer = circleToPolygonRing(circleDraft.center, radiusMeters);
+        if (outer.length >= 3) {
+          setPolygons((ps) => [
+            ...ps,
+            { id: newPolygonId(), outer, holes: [] },
+          ]);
+          setSaveStatus("Circle added. Tap polygon to edit vertices.");
+        }
+        setCircleDraft(null);
+        setDrawingActive(false);
+        return;
+      }
+
+      if (mapperMode === "polygon" && drawingActive && geofenceDrawTool === "polygon") {
         const pt: LatLng = [lat, lng];
         if (draftRing.length >= 3 && ringsNearlyClosed(draftRing, pt)) {
           const outer = [...draftRing];
@@ -1294,6 +1374,15 @@ export default function Dashboard() {
       }
 
       if (mapperMode === "polygon" && !drawingActive) {
+        if (selectedPolygonId) {
+          const selected = polygons.find((p) => p.id === selectedPolygonId);
+          if (selected && pointInPolygon(lat, lng, selected.outer)) {
+            return;
+          }
+          setSelectedPolygonId(null);
+          setSaveStatus("");
+        }
+
         let matched: GeoPolygonShape | null = null;
         for (const p of editableWorkingPolygons) {
           if (pointInPolygon(lat, lng, p.outer)) {
@@ -1311,15 +1400,13 @@ export default function Dashboard() {
           }
         }
         if (matched) {
-          const key = polygonKey(matched);
-          setRemovedPolygonKeys((prev) => {
-            const next = new Set(prev);
-            next.add(key);
-            return next;
-          });
-          setPolygons((ps) => ps.filter((p) => polygonKey(p) !== key));
+          setSelectedPolygonId(matched.id);
+          setSaveStatus(
+            "Selected — click an edge to add a point, drag points to move, long-press a point to remove it, long-press the polygon to delete it.",
+          );
           return;
         }
+        setSelectedPolygonId(null);
         for (const p of allWorkingPolygons) {
           if (editableWorkingPolygons.some((editablePoly) => editablePoly.id === p.id)) {
             continue;
@@ -1353,9 +1440,12 @@ export default function Dashboard() {
       allWorkingPolygons,
       editableWorkingPolygons,
       drawingActive,
+      geofenceDrawTool,
+      circleDraft,
       draftRing,
       holeParentId,
       polygons,
+      selectedPolygonId,
       proximityRadiusMeters,
       dynamicMinRadiusMeters,
       dynamicMaxRadiusMeters,
@@ -1371,11 +1461,84 @@ export default function Dashboard() {
     (lat: number, lng: number) => {
       if (activeTool === "measure" && measureA && !measureB) {
         setMeasurePreview([lat, lng]);
-      } else {
-        setMeasurePreview(null);
+        return;
+      }
+      setMeasurePreview(null);
+      if (
+        mapperMode === "polygon" &&
+        drawingActive &&
+        geofenceDrawTool === "circle" &&
+        circleDraft
+      ) {
+        const radiusMeters = Math.max(
+          distanceMeters(circleDraft.center, [lat, lng]),
+          5,
+        );
+        setCircleDraft({ center: circleDraft.center, radiusMeters });
       }
     },
-    [activeTool, measureA, measureB],
+    [activeTool, measureA, measureB, mapperMode, drawingActive, geofenceDrawTool, circleDraft],
+  );
+
+  const handleVertexMove = useCallback(
+    (polygonId: string, vertexIndex: number, lat: number, lng: number) => {
+      setPolygons((ps) =>
+        movePolygonOuterVertex(ps, polygonId, vertexIndex, lat, lng),
+      );
+    },
+    [],
+  );
+
+  const handleVertexDelete = useCallback(
+    (polygonId: string, vertexIndex: number) => {
+      setPolygons((ps) => {
+        const target = ps.find((p) => p.id === polygonId);
+        if (target && target.outer.length <= 3) {
+          setSaveStatus("A polygon needs at least 3 vertices.");
+          return ps;
+        }
+        setSaveStatus("Vertex removed.");
+        return deletePolygonOuterVertex(ps, polygonId, vertexIndex);
+      });
+    },
+    [],
+  );
+
+  const deleteSelectedPolygon = useCallback(() => {
+    if (!selectedPolygonId) return;
+    const key = polygonKey(
+      polygons.find((p) => p.id === selectedPolygonId) ?? {
+        id: selectedPolygonId,
+        outer: [],
+        holes: [],
+      },
+    );
+    setRemovedPolygonKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+    setPolygons((ps) => ps.filter((p) => p.id !== selectedPolygonId));
+    setSelectedPolygonId(null);
+    setSaveStatus("Polygon removed.");
+  }, [polygons, selectedPolygonId]);
+
+  const handleEdgeVertexAdd = useCallback(
+    (polygonId: string, segmentIndex: number, lat: number, lng: number) => {
+      setPolygons((ps) =>
+        insertPolygonOuterVertex(ps, polygonId, segmentIndex, lat, lng),
+      );
+      setSaveStatus("Vertex added on edge.");
+    },
+    [],
+  );
+
+  const handlePolygonLongPressDelete = useCallback(
+    (polygonId: string) => {
+      if (polygonId !== selectedPolygonId) return;
+      deleteSelectedPolygon();
+    },
+    [deleteSelectedPolygon, selectedPolygonId],
   );
 
   const clearH3 = () => setSelectedCells([]);
@@ -1385,6 +1548,8 @@ export default function Dashboard() {
     setDraftRing([]);
     setDrawingActive(false);
     setHoleParentId(null);
+    setCircleDraft(null);
+    setSelectedPolygonId(null);
   };
 
   const handleExportWorkspaceJson = () => {
@@ -1515,8 +1680,14 @@ export default function Dashboard() {
       setSaveStatus(`Zone name must be ${MAX_ZONE_NAME_LENGTH} characters or less.`);
       return;
     }
+    const cellsToSave = selectedCells.filter((c) => !removedCellIds.has(c));
+    const polygonsToSave = polygons.filter(
+      (p) => !removedPolygonKeys.has(polygonKey(p)),
+    );
+    const geoFenceForSave = polygonsToGeoFenceMultiPolygon(polygonsToSave);
+
     const canSaveGeometry =
-      allWorkingCells.length > 0 || allWorkingPolygons.length > 0;
+      cellsToSave.length > 0 || polygonsToSave.length > 0;
     const canSaveByType =
       usesMapGeometry
         ? canSaveGeometry
@@ -1551,7 +1722,7 @@ export default function Dashboard() {
       );
       return;
     }
-    if (usesMapGeometry && hasCrossResolutionOverlap(allWorkingCells)) {
+    if (usesMapGeometry && hasCrossResolutionOverlap(cellsToSave)) {
       setSaveStatus(
         "Overlapping H3 cells across resolutions are not allowed. Remove parent/child duplicates before saving.",
       );
@@ -1617,10 +1788,10 @@ export default function Dashboard() {
                       },
                 }
           : {
-              geo_fence_polygon: polygonsToGeoFenceMultiPolygon(allWorkingPolygons),
+              geo_fence_polygon: geoFenceForSave,
             };
       const configPayload: Record<string, unknown> = {
-        h3_cells: allWorkingCells,
+        h3_cells: cellsToSave,
         ...(zoneType === "proximity"
           ? {
               radius_meters: proximityRadiusMeters,
@@ -1661,8 +1832,8 @@ export default function Dashboard() {
         description,
         zone_type: compatibilityZoneType,
         type: zoneType,
-        h3_cells: allWorkingCells,
-        geo_fence_polygon: polygonsToGeoFenceMultiPolygon(allWorkingPolygons),
+        h3_cells: cellsToSave,
+        geo_fence_polygon: geoFenceForSave,
         geometry: geometryPayload,
         config: configPayload,
       };
@@ -1846,7 +2017,7 @@ export default function Dashboard() {
   const savedZoneCellLayers = useMemo<SavedZoneCellLayer[]>(
     () =>
       zoneEntries
-        .map((entry) => {
+        .map((entry, idx) => {
           const active = activeSavedZoneKey != null && entry.key === activeSavedZoneKey;
           if (!showAllZones && !active) return null;
           const cells = active
@@ -1858,12 +2029,15 @@ export default function Dashboard() {
                 )
               : [];
           if (cells.length === 0) return null;
+          const layerColor = active
+            ? "#FBBF24"
+            : ZONE_MAP_COLORS[idx % ZONE_MAP_COLORS.length];
           return {
             key: `saved-${entry.key}`,
             cells,
-            color: "#00E5D1",
-            fillOpacity: active ? 0.42 : 0.26,
-            weight: active ? 2.4 : 1.8,
+            color: layerColor,
+            fillOpacity: active ? 0.38 : 0.22,
+            weight: active ? 2.4 : 1.6,
           } satisfies SavedZoneCellLayer;
         })
         .filter((v): v is SavedZoneCellLayer => v !== null),
@@ -1873,7 +2047,7 @@ export default function Dashboard() {
   const savedZonePolygonLayers = useMemo<SavedZonePolygonLayer[]>(
     () =>
       zoneEntries
-        .map((entry) => {
+        .map((entry, idx) => {
           const active = activeSavedZoneKey != null && entry.key === activeSavedZoneKey;
           if (!showAllZones && !active) return null;
           const zonePolys = active ? polygons : zoneToPolygons(entry.zone);
@@ -1881,11 +2055,14 @@ export default function Dashboard() {
             (p) => !removedPolygonKeys.has(polygonKey(p)),
           );
           if (filtered.length === 0) return null;
+          const layerColor = active
+            ? "#FBBF24"
+            : ZONE_MAP_COLORS[idx % ZONE_MAP_COLORS.length];
           return {
             key: `poly-${entry.key}`,
             polygons: filtered,
-            color: "#00E5D1",
-            fillOpacity: active ? 0.28 : 0.14,
+            color: layerColor,
+            fillOpacity: active ? 0.26 : 0.12,
             weight: active ? 2.4 : 1.6,
           } satisfies SavedZonePolygonLayer;
         })
@@ -2062,6 +2239,16 @@ export default function Dashboard() {
     setMapFitBounds({ key: mapFitSeq.current, ...corners });
   }, []);
 
+  const focusPolygonShapes = useCallback((shapes: GeoPolygonShape[]) => {
+    const corners = cornersFromPolygonShapes(shapes);
+    if (corners) {
+      mapFitSeq.current += 1;
+      setMapFitBounds({ key: mapFitSeq.current, ...corners });
+      return;
+    }
+    if (shapes[0]) focusPolygonShape(shapes[0]);
+  }, [focusPolygonShape]);
+
   const focusObjectZone = useCallback(
     (center: [number, number], radiusMeters: number) => {
       const corners = cornersFromCircle(center, radiusMeters);
@@ -2075,8 +2262,65 @@ export default function Dashboard() {
     [],
   );
 
+  const focusAllZonesOnMap = useCallback(() => {
+    const parts: Array<ReturnType<typeof cornersFromH3Cell>> = [];
+    const circleDefaults = {
+      proximityRadiusMeters: proximityRadiusMeters || 500,
+      dynamicMinRadiusMeters: dynamicMinRadiusMeters || 200,
+      dynamicMaxRadiusMeters: dynamicMaxRadiusMeters || 1000,
+    };
+
+    for (const entry of zoneEntries) {
+      const zone = entry.zone;
+      const zoneKind = normalizeZoneTypeValue(zone.type ?? zone.zone_type);
+
+      if (isObjectZone(zone)) {
+        const center = extractZoneCenter(zone);
+        if (center) {
+          parts.push(cornersFromCircle(center, objectZoneRadiusMeters(zone)));
+        }
+        continue;
+      }
+
+      const polys = zoneToPolygons(zone);
+      if (polys.length > 0) {
+        parts.push(cornersFromPolygonShapes(polys));
+      }
+
+      if (Array.isArray(zone.h3_cells)) {
+        for (const cell of zone.h3_cells) {
+          if (typeof cell !== "string") continue;
+          parts.push(cornersFromH3Cell(cell));
+        }
+      }
+
+      if (zoneKind === "proximity" || zoneKind === "dynamic") {
+        const circles = parseCircleDraftsFromZone(
+          zone,
+          zoneKind,
+          circleDefaults,
+        );
+        for (const circle of circles) {
+          parts.push(cornersFromCircle(circle.center, circle.radiusMeters));
+        }
+      }
+    }
+
+    const merged = mergeFitBoundsCorners(parts);
+    if (!merged) return;
+    mapFitSeq.current += 1;
+    setMapFitBounds({ key: mapFitSeq.current, ...merged });
+  }, [
+    zoneEntries,
+    proximityRadiusMeters,
+    dynamicMinRadiusMeters,
+    dynamicMaxRadiusMeters,
+  ]);
+
   const focusSavedZoneOnMap = useCallback(
     (zone: SavedZone) => {
+      const zoneKind = normalizeZoneTypeValue(zone.type ?? zone.zone_type);
+
       if (isObjectZone(zone)) {
         const center = extractZoneCenter(zone);
         if (center) {
@@ -2084,23 +2328,45 @@ export default function Dashboard() {
         }
         return;
       }
-      const focusCell = Array.isArray(zone.h3_cells) ? zone.h3_cells[0] : undefined;
-      if (focusCell) {
-        focusH3Cell(focusCell);
+
+      const polygonsForZone = zoneToPolygons(zone);
+
+      if (zoneKind === "geofence") {
+        if (polygonsForZone.length > 0) {
+          focusPolygonShapes(polygonsForZone);
+        }
         return;
       }
-      const focusPoly = zoneToPolygons(zone)[0];
-      if (focusPoly) focusPolygonShape(focusPoly);
+
+      if (zoneKind === "grid") {
+        const focusCell = Array.isArray(zone.h3_cells) ? zone.h3_cells[0] : undefined;
+        if (focusCell) {
+          focusH3Cell(focusCell);
+          return;
+        }
+      }
+
+      if (polygonsForZone.length > 0) {
+        focusPolygonShapes(polygonsForZone);
+        return;
+      }
+
+      const focusCell = Array.isArray(zone.h3_cells) ? zone.h3_cells[0] : undefined;
+      if (focusCell) focusH3Cell(focusCell);
     },
-    [focusH3Cell, focusObjectZone, focusPolygonShape],
+    [focusH3Cell, focusObjectZone, focusPolygonShape, focusPolygonShapes],
   );
 
+  const didInitialZonesFitRef = useRef(false);
   useEffect(() => {
-    if (isCreatingNewZone || activeSavedZoneKey == null) return;
-    const entry = zoneEntries.find((row) => row.key === activeSavedZoneKey);
-    if (!entry) return;
-    focusSavedZoneOnMap(entry.zone);
-  }, [activeSavedZoneKey, zoneEntries, isCreatingNewZone, focusSavedZoneOnMap]);
+    if (zoneEntries.length === 0) {
+      didInitialZonesFitRef.current = false;
+      return;
+    }
+    if (didInitialZonesFitRef.current) return;
+    didInitialZonesFitRef.current = true;
+    focusAllZonesOnMap();
+  }, [zoneEntries, focusAllZonesOnMap]);
 
   const modeBadge = usesMapGeometry
     ? mapperMode === "h3"
@@ -2486,8 +2752,39 @@ export default function Dashboard() {
             {usesMapGeometry && mapperMode === "polygon" && (
               <div className="space-y-3 rounded-md border border-slate-700/80 bg-[#151a20]/50 p-3">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Polygon Select settings
+                  Geofence draw mode
                 </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGeofenceDrawTool("polygon");
+                      setCircleDraft(null);
+                    }}
+                    className={`rounded-md border px-2 py-2 text-xs font-medium transition ${
+                      geofenceDrawTool === "polygon"
+                        ? "border-[#00E5D1] bg-[#00E5D1]/10 text-[#00E5D1]"
+                        : "border-slate-700/80 text-slate-400"
+                    }`}
+                  >
+                    Polygon
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGeofenceDrawTool("circle");
+                      setDraftRing([]);
+                      setHoleParentId(null);
+                    }}
+                    className={`rounded-md border px-2 py-2 text-xs font-medium transition ${
+                      geofenceDrawTool === "circle"
+                        ? "border-[#00E5D1] bg-[#00E5D1]/10 text-[#00E5D1]"
+                        : "border-slate-700/80 text-slate-400"
+                    }`}
+                  >
+                    Circle
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -2496,6 +2793,9 @@ export default function Dashboard() {
                       if (!next) {
                         setDraftRing([]);
                         setHoleParentId(null);
+                        setCircleDraft(null);
+                      } else {
+                        setSelectedPolygonId(null);
                       }
                       return next;
                     });
@@ -2506,8 +2806,22 @@ export default function Dashboard() {
                       : "bg-[#00E5D1] text-[#0B0E11] hover:brightness-110"
                   }`}
                 >
-                  {drawingActive ? "Stop Drawing" : "Start Drawing"}
+                  {drawingActive ? "Stop drawing" : "Start drawing"}
                 </button>
+                {selectedPolygonId && !drawingActive && (
+                  <button
+                    type="button"
+                    onClick={deleteSelectedPolygon}
+                    className="w-full rounded-md border border-red-500/40 py-2 text-xs font-medium text-red-300 transition hover:bg-red-500/10"
+                  >
+                    Delete selected polygon
+                  </button>
+                )}
+                <p className="text-[10px] text-slate-500">
+                  {geofenceDrawTool === "polygon"
+                    ? "Draw: tap vertices, then tap the first point to close. Edit: tap a polygon to select — click an edge to add a point, drag points, long-press a point to remove it, long-press the polygon to delete it."
+                    : "Click map for circle center, move mouse for radius, click again to finish."}
+                </p>
                 <div>
                   <label className={labelClass} htmlFor="poly-op">
                     Opacity ({polygonOpacityPct}%)
@@ -2622,7 +2936,7 @@ export default function Dashboard() {
                 </div>
               )}
               <label className="flex cursor-pointer items-center justify-between gap-2 text-sm text-slate-300">
-                <span>Show all zones</span>
+                <span>Show all zones on map</span>
                 <input
                   type="checkbox"
                   checked={showAllZones}
@@ -2724,7 +3038,10 @@ export default function Dashboard() {
                             <button
                               key={entry.key}
                               type="button"
-                              onClick={() => loadSavedZone(entry)}
+                              onClick={() => {
+                                loadSavedZone(entry);
+                                focusSavedZoneOnMap(entry.zone);
+                              }}
                               className={`shrink-0 rounded-md border px-2.5 py-1.5 text-xs transition ${
                                 isActive
                                   ? "border-[#00E5D1] bg-[#00E5D1]/20 text-white"
@@ -2858,8 +3175,20 @@ export default function Dashboard() {
                         <li key={p.id}>
                           <button
                             type="button"
-                            onClick={() => focusPolygonShape(p)}
-                            className="w-full rounded px-2 py-1.5 text-left text-[10px] leading-snug text-[#00E5D1] transition hover:bg-[#00E5D1]/15 hover:text-white"
+                            onClick={() => {
+                              focusPolygonShape(p);
+                              setSelectedPolygonId(p.id);
+                              setMapperMode("polygon");
+                              setDrawingActive(false);
+                              setSaveStatus(
+                                "Polygon selected — drag handles to edit.",
+                              );
+                            }}
+                            className={`w-full rounded px-2 py-1.5 text-left text-[10px] leading-snug transition hover:bg-[#00E5D1]/15 hover:text-white ${
+                              selectedPolygonId === p.id
+                                ? "bg-[#00E5D1]/20 text-white"
+                                : "text-[#00E5D1]"
+                            }`}
                           >
                             <div className="flex items-baseline gap-2 font-mono">
                               <span className="shrink-0 text-slate-500">
@@ -2945,6 +3274,12 @@ export default function Dashboard() {
             grayscale={grayscaleMap}
             interactionMode={mapInteraction}
             drawingActive={drawingActive}
+            selectedPolygonId={selectedPolygonId}
+            onVertexMove={handleVertexMove}
+            onVertexDelete={handleVertexDelete}
+            onEdgeVertexAdd={handleEdgeVertexAdd}
+            onPolygonDelete={handlePolygonLongPressDelete}
+            circleDraft={circleDraft}
             onMapClick={handleMapClick}
             onMapMouseMove={(lat, lng) => {
               handleMapMouseMove(lat, lng);
@@ -2960,9 +3295,15 @@ export default function Dashboard() {
 
           {drawingActive && usesMapGeometry && mapperMode === "polygon" && (
             <div className="pointer-events-none absolute left-1/2 top-4 z-[500] -translate-x-1/2 rounded-md border border-amber-500/40 bg-[#0B0E11]/95 px-4 py-2 text-center text-xs text-amber-100 shadow-lg backdrop-blur">
-              Drawing · near start to close ·{" "}
-              <kbd className="rounded bg-white/10 px-1">Esc</kbd> undo ·{" "}
-              {holeParentId ? "Hole ring" : "Outer ring"}
+              {geofenceDrawTool === "circle"
+                ? "Circle: click center, move for radius, click again to finish"
+                : "Polygon: tap vertices, tap first point to close · "}
+              {geofenceDrawTool === "polygon" && (
+                <>
+                  <kbd className="rounded bg-white/10 px-1">Esc</kbd> undo ·{" "}
+                  {holeParentId ? "Hole ring" : "Outer ring"}
+                </>
+              )}
             </div>
           )}
 

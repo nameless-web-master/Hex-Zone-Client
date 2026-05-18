@@ -62,3 +62,140 @@ export function ringsNearlyClosed(
   if (ring.length < 3) return false;
   return distanceMeters(click, ring[0]) <= maxM;
 }
+
+export function movePolygonOuterVertex(
+  polygons: GeoPolygonShape[],
+  polygonId: string,
+  vertexIndex: number,
+  lat: number,
+  lng: number,
+): GeoPolygonShape[] {
+  return polygons.map((poly) => {
+    if (poly.id !== polygonId) return poly;
+    const outer = poly.outer.map((pt, idx) =>
+      idx === vertexIndex ? ([lat, lng] as LatLng) : pt,
+    );
+    return { ...poly, outer };
+  });
+}
+
+export function deletePolygonOuterVertex(
+  polygons: GeoPolygonShape[],
+  polygonId: string,
+  vertexIndex: number,
+): GeoPolygonShape[] {
+  return polygons.map((poly) => {
+    if (poly.id !== polygonId) return poly;
+    if (poly.outer.length <= 3) return poly;
+    return {
+      ...poly,
+      outer: poly.outer.filter((_, idx) => idx !== vertexIndex),
+    };
+  });
+}
+
+/** Index of a vertex within maxDistanceMeters of the click, or null. */
+export function nearestOuterVertexIndex(
+  lat: number,
+  lng: number,
+  outer: LatLng[],
+  maxDistanceMeters: number,
+): number | null {
+  let bestIdx: number | null = null;
+  let bestDist = maxDistanceMeters;
+  for (let i = 0; i < outer.length; i += 1) {
+    const d = distanceMeters([lat, lng], outer[i]);
+    if (d <= bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+function projectPointOntoSegment(p: LatLng, a: LatLng, b: LatLng): LatLng {
+  const [lat, lng] = p;
+  const [lat1, lng1] = a;
+  const [lat2, lng2] = b;
+  const dx = lng2 - lng1;
+  const dy = lat2 - lat1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return a;
+  const t = Math.max(
+    0,
+    Math.min(1, ((lng - lng1) * dx + (lat - lat1) * dy) / lenSq),
+  );
+  return [lat1 + t * dy, lng1 + t * dx];
+}
+
+/** Closest edge segment on the outer ring within maxDistanceMeters. */
+export function findClosestOuterEdge(
+  lat: number,
+  lng: number,
+  outer: LatLng[],
+  maxDistanceMeters: number,
+): {
+  segmentIndex: number;
+  lat: number;
+  lng: number;
+  distanceMeters: number;
+} | null {
+  if (outer.length < 2) return null;
+  const click: LatLng = [lat, lng];
+  let best: {
+    segmentIndex: number;
+    lat: number;
+    lng: number;
+    distanceMeters: number;
+  } | null = null;
+
+  for (let i = 0; i < outer.length; i += 1) {
+    const a = outer[i];
+    const b = outer[(i + 1) % outer.length];
+    const snap = projectPointOntoSegment(click, a, b);
+    const dist = distanceMeters(click, snap);
+    if (dist > maxDistanceMeters) continue;
+    if (!best || dist < best.distanceMeters) {
+      best = {
+        segmentIndex: i,
+        lat: snap[0],
+        lng: snap[1],
+        distanceMeters: dist,
+      };
+    }
+  }
+  return best;
+}
+
+/** Insert a vertex after segmentIndex (between outer[i] and outer[i+1]). */
+export function insertPolygonOuterVertex(
+  polygons: GeoPolygonShape[],
+  polygonId: string,
+  segmentIndex: number,
+  lat: number,
+  lng: number,
+): GeoPolygonShape[] {
+  return polygons.map((poly) => {
+    if (poly.id !== polygonId) return poly;
+    const insertAt = segmentIndex + 1;
+    const outer = [...poly.outer];
+    outer.splice(insertAt, 0, [lat, lng]);
+    return { ...poly, outer };
+  });
+}
+
+/** Approximate circle as a polygon ring (meters). */
+export function circleToPolygonRing(
+  center: LatLng,
+  radiusMeters: number,
+  steps = 64,
+): LatLng[] {
+  const [lat, lng] = center;
+  if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) return [];
+  const ring = turf.circle([lng, lat], radiusMeters / 1000, {
+    units: "kilometers",
+    steps,
+  });
+  const coords = ring.geometry.coordinates[0] as [number, number][];
+  return coords.map(([lon, la]) => [la, lon] as LatLng);
+}

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 import L from "leaflet";
 import type { LatLngExpression } from "leaflet";
 import {
@@ -70,6 +70,22 @@ type HexMapperMapProps = {
   /** Interaction */
   interactionMode: MapInteractionMode;
   drawingActive: boolean;
+  selectedPolygonId?: string | null;
+  onVertexMove?: (
+    polygonId: string,
+    vertexIndex: number,
+    lat: number,
+    lng: number,
+  ) => void;
+  onVertexDelete?: (polygonId: string, vertexIndex: number) => void;
+  onEdgeVertexAdd?: (
+    polygonId: string,
+    segmentIndex: number,
+    lat: number,
+    lng: number,
+  ) => void;
+  onPolygonDelete?: (polygonId: string) => void;
+  circleDraft?: { center: LatLng; radiusMeters: number } | null;
   onMapClick: (lat: number, lng: number) => void;
   onMapMouseMove: (lat: number, lng: number) => void;
   onContextMenu: (lat: number, lng: number, clientX: number, clientY: number) => void;
@@ -143,6 +159,7 @@ function MapInteractionBridge({
   onMapMouseMove,
   onContextMenu,
   interactive,
+  suppressMapClickRef,
 }: Pick<
   HexMapperMapProps,
   | "interactionMode"
@@ -151,10 +168,16 @@ function MapInteractionBridge({
   | "onMapMouseMove"
   | "onContextMenu"
   | "interactive"
->) {
+> & {
+  suppressMapClickRef: MutableRefObject<boolean>;
+}) {
   useMapEvent("click", (e) => {
     if (!interactive) return;
     if (interactionMode === "none") return;
+    if (suppressMapClickRef.current) {
+      suppressMapClickRef.current = false;
+      return;
+    }
     const { lat, lng } = e.latlng;
     onMapClick(lat, lng);
   });
@@ -173,6 +196,282 @@ function MapInteractionBridge({
   });
 
   return null;
+}
+
+const VERTEX_HANDLE_RADIUS = 9;
+const LONG_PRESS_MS = 650;
+const DRAG_THRESHOLD_PX = 6;
+const EDGE_HIT_WEIGHT = 14;
+
+function createPointerHandler({
+  map,
+  suppressMapClickRef,
+  draggable,
+  onLongPress,
+  onDragMove,
+  onDragEnd,
+}: {
+  map: L.Map;
+  suppressMapClickRef: MutableRefObject<boolean>;
+  draggable: boolean;
+  onLongPress: () => void;
+  onDragMove: (lat: number, lng: number) => void;
+  onDragEnd: () => void;
+}) {
+  const latLngFromClientPoint = (clientX: number, clientY: number) => {
+    const rect = map.getContainer().getBoundingClientRect();
+    return map.containerPointToLatLng(
+      L.point(clientX - rect.left, clientY - rect.top),
+    );
+  };
+
+  return (e: L.LeafletMouseEvent) => {
+    L.DomEvent.stop(e);
+    const startX =
+      "clientX" in e.originalEvent ? e.originalEvent.clientX : 0;
+    const startY =
+      "clientY" in e.originalEvent ? e.originalEvent.clientY : 0;
+    let dragging = false;
+    let longPressTimer: number | null = window.setTimeout(() => {
+      if (!dragging) {
+        onLongPress();
+        suppressMapClickRef.current = true;
+      }
+      longPressTimer = null;
+    }, LONG_PRESS_MS);
+
+    const clearLongPress = () => {
+      if (longPressTimer != null) {
+        window.clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    };
+
+    const onMove = (ev: MouseEvent | TouchEvent) => {
+      const point =
+        "touches" in ev ? ev.touches[0] : (ev as MouseEvent);
+      if (!point) return;
+
+      const dx = point.clientX - startX;
+      const dy = point.clientY - startY;
+      if (!dragging && Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) {
+        if (!draggable) {
+          clearLongPress();
+          onEnd();
+          return;
+        }
+        dragging = true;
+        clearLongPress();
+        map.dragging.disable();
+        map.getContainer().style.cursor = "grabbing";
+      }
+      if (!dragging) return;
+
+      if ("touches" in ev) {
+        ev.preventDefault();
+      }
+      const ll = latLngFromClientPoint(point.clientX, point.clientY);
+      onDragMove(ll.lat, ll.lng);
+    };
+
+    const onEnd = () => {
+      clearLongPress();
+      if (dragging) {
+        map.dragging.enable();
+        map.getContainer().style.removeProperty("cursor");
+        onDragEnd();
+        suppressMapClickRef.current = true;
+      }
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onEnd);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      window.removeEventListener("touchcancel", onEnd);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onEnd);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onEnd);
+    window.addEventListener("touchcancel", onEnd);
+  };
+}
+
+function PolygonVertexHandle({
+  polygonId,
+  vertexIndex,
+  position,
+  onMove,
+  onDelete,
+  suppressMapClickRef,
+}: {
+  polygonId: string;
+  vertexIndex: number;
+  position: LatLng;
+  onMove: (polygonId: string, vertexIndex: number, lat: number, lng: number) => void;
+  onDelete: (polygonId: string, vertexIndex: number) => void;
+  suppressMapClickRef: MutableRefObject<boolean>;
+}) {
+  const map = useMap();
+  const posRef = useRef<LatLng>(position);
+  const [markerPos, setMarkerPos] = useState<LatLng>(position);
+
+  useEffect(() => {
+    posRef.current = markerPos;
+  }, [markerPos]);
+
+  useEffect(() => {
+    setMarkerPos(position);
+    posRef.current = position;
+  }, [position[0], position[1]]);
+
+  const onPointerDown = createPointerHandler({
+    map,
+    suppressMapClickRef,
+    draggable: true,
+    onLongPress: () => onDelete(polygonId, vertexIndex),
+    onDragMove: (lat, lng) => {
+      const next: LatLng = [lat, lng];
+      setMarkerPos(next);
+      posRef.current = next;
+      onMove(polygonId, vertexIndex, lat, lng);
+    },
+    onDragEnd: () => {
+      const [lat, lng] = posRef.current;
+      onMove(polygonId, vertexIndex, lat, lng);
+    },
+  });
+
+  return (
+    <CircleMarker
+      center={markerPos}
+      radius={VERTEX_HANDLE_RADIUS}
+      bubblingMouseEvents={false}
+      pathOptions={{
+        color: "#0B0E11",
+        weight: 2,
+        fillColor: "#00E5D1",
+        fillOpacity: 1,
+      }}
+      eventHandlers={
+        {
+          mousedown: onPointerDown,
+          touchstart: onPointerDown,
+          click: (e) => L.DomEvent.stop(e),
+        } as L.LeafletEventHandlerFnMap
+      }
+    />
+  );
+}
+
+function SelectedPolygonEditLayer({
+  polygon,
+  polygonColor,
+  polygonFillOpacity,
+  onEdgeVertexAdd,
+  onPolygonDelete,
+  onVertexMove,
+  onVertexDelete,
+  suppressMapClickRef,
+}: {
+  polygon: GeoPolygonShape;
+  polygonColor: string;
+  polygonFillOpacity: number;
+  onEdgeVertexAdd: (
+    polygonId: string,
+    segmentIndex: number,
+    lat: number,
+    lng: number,
+  ) => void;
+  onPolygonDelete: (polygonId: string) => void;
+  onVertexMove: (
+    polygonId: string,
+    vertexIndex: number,
+    lat: number,
+    lng: number,
+  ) => void;
+  onVertexDelete: (polygonId: string, vertexIndex: number) => void;
+  suppressMapClickRef: MutableRefObject<boolean>;
+}) {
+  const map = useMap();
+  const { outer } = polygon;
+  const rings = [outer, ...polygon.holes].filter((r) => r.length >= 3);
+  const positionRings = rings.map((ring) =>
+    ring.map(([lat, lng]) => [lat, lng] as [number, number]),
+  );
+
+  const onBodyPointerDown = createPointerHandler({
+    map,
+    suppressMapClickRef,
+    draggable: false,
+    onLongPress: () => onPolygonDelete(polygon.id),
+    onDragMove: () => {},
+    onDragEnd: () => {},
+  });
+
+  return (
+    <>
+      <Polygon
+        positions={positionRings as LatLngExpression[][]}
+        interactive
+        bubblingMouseEvents={false}
+        pathOptions={{
+          color: "#FBBF24",
+          weight: 3,
+          fillColor: polygonColor,
+          fillOpacity: Math.min(polygonFillOpacity + 0.08, 0.5),
+        }}
+        eventHandlers={
+          {
+            mousedown: onBodyPointerDown,
+            touchstart: onBodyPointerDown,
+            click: (e) => L.DomEvent.stop(e),
+          } as L.LeafletEventHandlerFnMap
+        }
+      />
+
+      {outer.map((pt, segmentIndex) => {
+        const next = outer[(segmentIndex + 1) % outer.length];
+        return (
+          <Polyline
+            key={`${polygon.id}-edge-${segmentIndex}`}
+            positions={[
+              [pt[0], pt[1]],
+              [next[0], next[1]],
+            ]}
+            bubblingMouseEvents={false}
+            pathOptions={{
+              color: "#FBBF24",
+              weight: EDGE_HIT_WEIGHT,
+              opacity: 0.45,
+              lineCap: "round",
+              lineJoin: "round",
+            }}
+            eventHandlers={{
+              click: (e) => {
+                L.DomEvent.stop(e);
+                const { lat, lng } = e.latlng;
+                onEdgeVertexAdd(polygon.id, segmentIndex, lat, lng);
+                suppressMapClickRef.current = true;
+              },
+            }}
+          />
+        );
+      })}
+
+      {outer.map((pt, vertexIndex) => (
+        <PolygonVertexHandle
+          key={`${polygon.id}-v-${vertexIndex}`}
+          polygonId={polygon.id}
+          vertexIndex={vertexIndex}
+          position={pt}
+          onMove={onVertexMove}
+          onDelete={onVertexDelete}
+          suppressMapClickRef={suppressMapClickRef}
+        />
+      ))}
+    </>
+  );
 }
 
 export default function HexMapperMap({
@@ -197,12 +496,19 @@ export default function HexMapperMap({
   grayscale,
   interactionMode,
   drawingActive,
+  selectedPolygonId = null,
+  onVertexMove,
+  onVertexDelete,
+  onEdgeVertexAdd,
+  onPolygonDelete,
+  circleDraft = null,
   onMapClick,
   onMapMouseMove,
   onContextMenu,
   onCursorCoords,
   interactive,
 }: HexMapperMapProps) {
+  const suppressMapClickRef = useRef(false);
   const [useFallbackTiles, setUseFallbackTiles] = useState(false);
 
   useEffect(() => {
@@ -330,6 +636,12 @@ export default function HexMapperMap({
         ))}
 
         {polygons.map((p) => {
+          const isSelected =
+            selectedPolygonId === p.id &&
+            !drawingActive &&
+            onEdgeVertexAdd &&
+            onPolygonDelete;
+          if (isSelected) return null;
           const rings = [p.outer, ...p.holes].filter((r) => r.length >= 3);
           if (rings.length === 0) return null;
           const positionRings = rings.map((ring) =>
@@ -348,6 +660,44 @@ export default function HexMapperMap({
             />
           );
         })}
+
+        {circleDraft &&
+          circleDraft.radiusMeters > 0 &&
+          Number.isFinite(circleDraft.center[0]) && (
+            <Circle
+              center={circleDraft.center}
+              radius={circleDraft.radiusMeters}
+              pathOptions={{
+                color: draftLineColor,
+                weight: 2,
+                dashArray: "6 8",
+                fillColor: draftLineColor,
+                fillOpacity: 0.12,
+              }}
+            />
+          )}
+
+        {selectedPolygonId &&
+          !drawingActive &&
+          onVertexMove &&
+          onVertexDelete &&
+          onEdgeVertexAdd &&
+          onPolygonDelete &&
+          polygons
+            .filter((p) => p.id === selectedPolygonId && p.outer.length >= 3)
+            .map((p) => (
+              <SelectedPolygonEditLayer
+                key={`edit-${p.id}`}
+                polygon={p}
+                polygonColor={polygonColor}
+                polygonFillOpacity={polygonFillOpacity}
+                onEdgeVertexAdd={onEdgeVertexAdd}
+                onPolygonDelete={onPolygonDelete}
+                onVertexMove={onVertexMove}
+                onVertexDelete={onVertexDelete}
+                suppressMapClickRef={suppressMapClickRef}
+              />
+            ))}
 
         {draftRing.length > 0 && (
           <>
@@ -449,6 +799,7 @@ export default function HexMapperMap({
           }}
           onContextMenu={onContextMenu}
           interactive={interactive}
+          suppressMapClickRef={suppressMapClickRef}
         />
       </MapContainer>
     </div>

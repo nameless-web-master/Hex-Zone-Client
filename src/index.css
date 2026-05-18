@@ -29,6 +29,11 @@ button, input, textarea, select {
   border-radius: 1rem;
 }
 
+.hex-zone-vertex-handle {
+  background: transparent !important;
+  border: none !important;
+}
+
 .layer-card {
   @apply rounded-3xl border border-slate-800/70 bg-slate-900/85 p-5 shadow-glow backdrop-blur-xl;
 }
