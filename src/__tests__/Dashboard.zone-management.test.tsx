@@ -168,7 +168,7 @@ describe("Dashboard zone management", () => {
       target: { value: "  Operations West  " },
     });
     fireEvent.change(screen.getByLabelText("Zone type"), {
-      target: { value: "custom_1" },
+      target: { value: "communal_id" },
     });
     fireEvent.change(screen.getByLabelText("Communal ID"), {
       target: { value: "COMM-1" },
@@ -196,7 +196,7 @@ describe("Dashboard zone management", () => {
     renderDashboard();
 
     fireEvent.change(screen.getByLabelText("Zone type"), {
-      target: { value: "custom_1" },
+      target: { value: "communal_id" },
     });
     fireEvent.change(screen.getByLabelText("Communal ID"), {
       target: { value: "COMM-2" },

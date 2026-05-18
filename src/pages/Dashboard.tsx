@@ -37,8 +37,15 @@ import {
   parseKmlToPolygons,
   parseWktToPolygons,
 } from "../lib/wktKml";
-import { cornersFromH3Cell, cornersFromPolygonShape } from "../lib/mapBounds";
-import { searchPhotonAddresses } from "../lib/addressSearch";
+import {
+  cornersFromCircle,
+  cornersFromH3Cell,
+  cornersFromPolygonShape,
+} from "../lib/mapBounds";
+import {
+  photonPlaceReferenceId,
+  searchPhotonAddresses,
+} from "../lib/addressSearch";
 
 const accent = "#00E5D1";
 const panel = "bg-[#151a20]";
@@ -47,10 +54,12 @@ type MapperMode = "h3" | "polygon";
 type ActiveTool = null | "measure";
 type ZoneTypeMode =
   | "geofence"
+  | "grid"
   | "proximity"
   | "dynamic"
-  | "custom_1"
-  | "custom_2";
+  | "communal_id"
+  | "government_local_code"
+  | "object";
 
 type HexMapperExport = {
   version: 1;
@@ -309,11 +318,20 @@ function savedZoneRecordId(zone: SavedZone): string {
 
 function normalizeZoneTypeValue(raw: unknown): ZoneTypeMode {
   const value = String(raw ?? "").toLowerCase();
+  if (value === "grid" || value === "warn" || value === "alert") return "grid";
   if (value === "proximity") return "proximity";
-  if (value === "dynamic") return "dynamic";
-  if (value === "custom_1") return "custom_1";
-  if (value === "custom_2") return "custom_2";
+  if (value === "dynamic" || value === "emergency") return "dynamic";
+  if (value === "communal_id" || value === "custom_1") return "communal_id";
+  if (value === "government_local_code" || value === "custom_2")
+    return "government_local_code";
+  if (value === "object") return "object";
   return "geofence";
+}
+
+function zoneConfigMap(zone: SavedZone): Record<string, unknown> {
+  return zone.config && typeof zone.config === "object"
+    ? (zone.config as Record<string, unknown>)
+    : {};
 }
 
 function extractZoneCenter(zone: SavedZone): [number, number] | null {
@@ -325,8 +343,32 @@ function extractZoneCenter(zone: SavedZone): [number, number] | null {
       : null;
   const latitude = Number(center?.latitude);
   const longitude = Number(center?.longitude);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-  return [latitude, longitude];
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    return [latitude, longitude];
+  }
+  const config = zoneConfigMap(zone);
+  const configLat = Number(config.latitude ?? config.lat);
+  const configLng = Number(config.longitude ?? config.lng ?? config.lon);
+  if (Number.isFinite(configLat) && Number.isFinite(configLng)) {
+    return [configLat, normalizeLongitude(configLng)];
+  }
+  return null;
+}
+
+function isObjectZone(zone: SavedZone): boolean {
+  if (normalizeZoneTypeValue(zone.type ?? zone.zone_type) === "object") return true;
+  const config = zoneConfigMap(zone);
+  return (
+    typeof config.object_id === "string" &&
+    config.object_id.trim().length > 0 &&
+    Number(config.radius_meters) > 0
+  );
+}
+
+function objectZoneRadiusMeters(zone: SavedZone): number {
+  const config = zoneConfigMap(zone);
+  const radius = Number(config.radius_meters);
+  return Number.isFinite(radius) && radius > 0 ? radius : 250;
 }
 
 function normalizeLongitude(value: number): number {
@@ -697,6 +739,11 @@ export default function Dashboard() {
   const [dynamicMaxRadiusMeters, setDynamicMaxRadiusMeters] = useState(1000);
   const [communalCode, setCommunalCode] = useState("");
   const [governmentLocalCode, setGovernmentLocalCode] = useState("");
+  const [objectReferenceId, setObjectReferenceId] = useState("");
+  const [objectPlaceName, setObjectPlaceName] = useState("");
+  const [objectRadiusMeters, setObjectRadiusMeters] = useState(250);
+  const [objectCenter, setObjectCenter] = useState<[number, number] | null>(null);
+  const [objectSearchQuery, setObjectSearchQuery] = useState("");
   const [proximityCircles, setProximityCircles] = useState<DraftCircle[]>([]);
   const [dynamicCircles, setDynamicCircles] = useState<DraftCircle[]>([]);
 
@@ -806,15 +853,17 @@ export default function Dashboard() {
     (canCreateZone ? "" : "You have reached your allowed zone limit.");
   const canEditCurrentSelection =
     isCreatingNewZone || (!!activeZoneEntry && activeSavedZoneEditable);
-  const usesMapGeometry = zoneType === "geofence";
+  const usesMapGeometry = zoneType === "geofence" || zoneType === "grid";
   const typeVisual = useMemo(() => {
+    if (zoneType === "grid") return { color: "#F59E0B", label: "Grid" };
     if (zoneType === "proximity")
       return { color: "#06B6D4", label: "Proximity" };
     if (zoneType === "dynamic") return { color: "#22C55E", label: "Dynamic" };
-    if (zoneType === "custom_1")
+    if (zoneType === "communal_id")
       return { color: "#64748B", label: "Communal ID (Pending)" };
-    if (zoneType === "custom_2")
+    if (zoneType === "government_local_code")
       return { color: "#64748B", label: "Gov Local Code (Pending)" };
+    if (zoneType === "object") return { color: "#A855F7", label: "Object" };
     return { color: accent, label: "Geofence" };
   }, [zoneType]);
 
@@ -903,6 +952,37 @@ export default function Dashboard() {
             dynamicMaxRadiusMeters: 1000,
           })
         : [],
+    );
+    const chosenConfig = zoneConfigMap(chosen.zone);
+    setCommunalCode(
+      typeof chosenConfig.communal_id === "string" ? chosenConfig.communal_id : "",
+    );
+    setGovernmentLocalCode(
+      typeof chosenConfig.local_code === "string" ? chosenConfig.local_code : "",
+    );
+    setObjectReferenceId(
+      typeof chosenConfig.object_id === "string" ? chosenConfig.object_id : "",
+    );
+    setObjectPlaceName(
+      typeof chosenConfig.object_name === "string"
+        ? chosenConfig.object_name
+        : typeof chosenConfig.object_id === "string"
+          ? chosenConfig.object_id
+          : "",
+    );
+    setObjectRadiusMeters(
+      typeof chosenConfig.radius_meters === "number" && chosenConfig.radius_meters > 0
+        ? chosenConfig.radius_meters
+        : 250,
+    );
+    const center = extractZoneCenter(chosen.zone);
+    setObjectCenter(center);
+    setObjectSearchQuery(
+      typeof chosenConfig.object_name === "string" && chosenConfig.object_name.trim()
+        ? chosenConfig.object_name
+        : typeof chosenConfig.object_id === "string"
+          ? chosenConfig.object_id
+          : "",
     );
   }, [zoneEntries, activeSavedZoneKey, isCreatingNewZone, capabilities?.can_edit_active_zone]);
 
@@ -1100,6 +1180,13 @@ export default function Dashboard() {
               },
             ];
           });
+          return;
+        }
+        if (zoneType === "object") {
+          setObjectCenter([lat, lng]);
+          setSaveStatus(
+            "Object anchor updated on map. Adjust radius if needed, then save.",
+          );
           return;
         }
         setSaveStatus(
@@ -1439,10 +1526,14 @@ export default function Dashboard() {
             ? dynamicMinRadiusMeters > 0 &&
               dynamicMaxRadiusMeters >= dynamicMinRadiusMeters &&
               dynamicCircles.length > 0
-            : zoneType === "custom_1"
+            : zoneType === "communal_id"
               ? communalCode.trim().length > 0
-              : zoneType === "custom_2"
+              : zoneType === "government_local_code"
                 ? governmentLocalCode.trim().length > 0
+                : zoneType === "object"
+                  ? objectReferenceId.trim().length > 0 &&
+                    objectRadiusMeters > 0 &&
+                    objectCenter != null
                 : true;
     if (!canSaveByType) {
       setSaveStatus(
@@ -1452,9 +1543,11 @@ export default function Dashboard() {
             ? "Set a proximity radius before saving."
             : zoneType === "dynamic"
               ? "Set valid dynamic min/max radius values before saving."
-              : zoneType === "custom_1"
+              : zoneType === "communal_id"
                 ? "Enter communal ID before saving."
-                : "Enter government local code before saving.",
+                : zoneType === "government_local_code"
+                  ? "Enter government local code before saving."
+                  : "Set object ID, radius, and anchor point before saving.",
       );
       return;
     }
@@ -1511,6 +1604,18 @@ export default function Dashboard() {
                 centers: dynamicCenters,
                 circles: dynamicCircleDefs,
               }
+            : zoneType === "object"
+              ? {
+                  center: objectCenter
+                    ? {
+                        latitude: objectCenter[0],
+                        longitude: objectCenter[1],
+                      }
+                    : {
+                        latitude: mapCenter[0],
+                        longitude: mapCenter[1],
+                      },
+                }
           : {
               geo_fence_polygon: polygonsToGeoFenceMultiPolygon(allWorkingPolygons),
             };
@@ -1535,11 +1640,19 @@ export default function Dashboard() {
               })),
             }
           : {}),
-        ...(zoneType === "custom_1"
+        ...(zoneType === "communal_id"
           ? { communal_id: communalCode.trim() }
           : {}),
-        ...(zoneType === "custom_2"
+        ...(zoneType === "government_local_code"
           ? { local_code: governmentLocalCode.trim() }
+          : {}),
+        ...(zoneType === "object"
+          ? {
+              object_id: objectReferenceId.trim(),
+              object_name: (objectPlaceName.trim() || objectSearchQuery.trim()) || undefined,
+              object_source: "place",
+              radius_meters: objectRadiusMeters,
+            }
           : {}),
       };
       const payload = {
@@ -1622,6 +1735,36 @@ export default function Dashboard() {
           })
         : [],
     );
+    const config = zoneConfigMap(zone);
+    setCommunalCode(
+      typeof config.communal_id === "string" ? config.communal_id : "",
+    );
+    setGovernmentLocalCode(
+      typeof config.local_code === "string" ? config.local_code : "",
+    );
+    setObjectReferenceId(
+      typeof config.object_id === "string" ? config.object_id : "",
+    );
+    setObjectPlaceName(
+      typeof config.object_name === "string"
+        ? config.object_name
+        : typeof config.object_id === "string"
+          ? config.object_id
+          : "",
+    );
+    setObjectRadiusMeters(
+      typeof config.radius_meters === "number" && config.radius_meters > 0
+        ? config.radius_meters
+        : 250,
+    );
+    setObjectCenter(extractZoneCenter(zone));
+    setObjectSearchQuery(
+      typeof config.object_name === "string" && config.object_name.trim()
+        ? config.object_name
+        : typeof config.object_id === "string"
+          ? config.object_id
+          : "",
+    );
     setSaveStatus(
       entry.editable
         ? `Loaded ${zone.name ?? `zone ${savedZoneId(zone)}`}.`
@@ -1662,6 +1805,13 @@ export default function Dashboard() {
     setPolygons([]);
     setProximityCircles([]);
     setDynamicCircles([]);
+    setCommunalCode("");
+    setGovernmentLocalCode("");
+    setObjectReferenceId("");
+    setObjectPlaceName("");
+    setObjectSearchQuery("");
+    setObjectRadiusMeters(250);
+    setObjectCenter(null);
     setDraftRing([]);
     setDrawingActive(false);
     setHoleParentId(null);
@@ -1678,6 +1828,10 @@ export default function Dashboard() {
     setPolygons([]);
     setProximityCircles([]);
     setDynamicCircles([]);
+    setObjectReferenceId("");
+    setObjectPlaceName("");
+    setObjectSearchQuery("");
+    setObjectCenter(null);
     setDraftRing([]);
     setDrawingActive(false);
     setHoleParentId(null);
@@ -1807,6 +1961,24 @@ export default function Dashboard() {
           ]),
         );
       }
+
+      if (normalizedType === "object") {
+        const zoneConfig = active
+          ? { radius_meters: objectRadiusMeters }
+          : zoneConfigMap(entry.zone);
+        const center = active ? objectCenter : extractZoneCenter(entry.zone);
+        const radius = Number(zoneConfig.radius_meters);
+        if (center && Number.isFinite(radius) && radius > 0) {
+          circles.push({
+            key: `obj-${entry.key}`,
+            center,
+            radiusMeters: radius,
+            color: "#A855F7",
+            fillOpacity: active ? 0.14 : 0.08,
+            dashArray: "3 6",
+          });
+        }
+      }
     });
 
     // Keep unsaved new-zone circles visible even without a selected saved zone.
@@ -1848,6 +2020,21 @@ export default function Dashboard() {
         ]),
       );
     }
+    if (
+      isCreatingNewZone &&
+      zoneType === "object" &&
+      objectCenter &&
+      objectRadiusMeters > 0
+    ) {
+      circles.push({
+        key: "draft-object",
+        center: objectCenter,
+        radiusMeters: objectRadiusMeters,
+        color: "#A855F7",
+        fillOpacity: 0.14,
+        dashArray: "3 6",
+      });
+    }
     return circles.filter((c) => c.radiusMeters > 0);
   }, [
     zoneEntries,
@@ -1857,6 +2044,8 @@ export default function Dashboard() {
     zoneType,
     dynamicCircles,
     proximityCircles,
+    objectCenter,
+    objectRadiusMeters,
   ]);
 
   const focusH3Cell = useCallback((cellId: string) => {
@@ -1872,6 +2061,46 @@ export default function Dashboard() {
     mapFitSeq.current += 1;
     setMapFitBounds({ key: mapFitSeq.current, ...corners });
   }, []);
+
+  const focusObjectZone = useCallback(
+    (center: [number, number], radiusMeters: number) => {
+      const corners = cornersFromCircle(center, radiusMeters);
+      if (corners) {
+        mapFitSeq.current += 1;
+        setMapFitBounds({ key: mapFitSeq.current, ...corners });
+        return;
+      }
+      setMapCenter(center);
+    },
+    [],
+  );
+
+  const focusSavedZoneOnMap = useCallback(
+    (zone: SavedZone) => {
+      if (isObjectZone(zone)) {
+        const center = extractZoneCenter(zone);
+        if (center) {
+          focusObjectZone(center, objectZoneRadiusMeters(zone));
+        }
+        return;
+      }
+      const focusCell = Array.isArray(zone.h3_cells) ? zone.h3_cells[0] : undefined;
+      if (focusCell) {
+        focusH3Cell(focusCell);
+        return;
+      }
+      const focusPoly = zoneToPolygons(zone)[0];
+      if (focusPoly) focusPolygonShape(focusPoly);
+    },
+    [focusH3Cell, focusObjectZone, focusPolygonShape],
+  );
+
+  useEffect(() => {
+    if (isCreatingNewZone || activeSavedZoneKey == null) return;
+    const entry = zoneEntries.find((row) => row.key === activeSavedZoneKey);
+    if (!entry) return;
+    focusSavedZoneOnMap(entry.zone);
+  }, [activeSavedZoneKey, zoneEntries, isCreatingNewZone, focusSavedZoneOnMap]);
 
   const modeBadge = usesMapGeometry
     ? mapperMode === "h3"
@@ -2000,13 +2229,15 @@ export default function Dashboard() {
                 className={`w-full rounded-md border border-slate-700/80 ${panel} px-3 py-2 text-sm text-white focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25`}
               >
                 <option value="geofence">Geofence</option>
+                <option value="grid">Grid zoning</option>
                 <option value="proximity">Proximity-to-source</option>
                 <option value="dynamic">Dynamic-size</option>
-                <option value="custom_1">Communal ID</option>
-                <option value="custom_2">Government Local Code</option>
+                <option value="communal_id">Communal ID</option>
+                <option value="government_local_code">Government Local Code</option>
+                <option value="object">Object zoning</option>
               </select>
               <p className="mt-1 text-[10px] text-slate-500">
-                H3/Geofence types use map drawing. Other types use config fields.
+                Geofence/Grid use map drawing. Other types use profile fields.
               </p>
               <p className="mt-1 text-[10px]" style={{ color: typeVisual.color }}>
                 Active profile: {typeVisual.label}
@@ -2064,7 +2295,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            {zoneType === "custom_1" && (
+            {zoneType === "communal_id" && (
               <div>
                 <label className={labelClass} htmlFor="zone-communal-id">
                   Communal ID
@@ -2079,7 +2310,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            {zoneType === "custom_2" && (
+            {zoneType === "government_local_code" && (
               <div>
                 <label className={labelClass} htmlFor="zone-gov-code">
                   Government local code
@@ -2091,6 +2322,63 @@ export default function Dashboard() {
                   placeholder="GOV-LOCAL-001"
                   className="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white"
                 />
+              </div>
+            )}
+
+            {zoneType === "object" && (
+              <div className="space-y-2">
+                <AddressAutocompleteInput
+                  id="zone-object-search"
+                  label="Search object / place"
+                  value={objectSearchQuery}
+                  onChange={(label, coords, feature) => {
+                    setObjectSearchQuery(label);
+                    if (!coords) return;
+                    const [lat, lng] = coords;
+                    setObjectCenter([lat, lng]);
+                    setObjectPlaceName(label);
+                    setObjectReferenceId(
+                      feature ? photonPlaceReferenceId(feature) : objectReferenceId,
+                    );
+                    setMapCenter([lat, lng]);
+                    setSaveStatus(
+                      `Object set to "${label}". Set radius and save the zone.`,
+                    );
+                  }}
+                  placeholder="Building, cafe, shop, landmark…"
+                  labelClassName={labelClass}
+                  inputClassName="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-[#00E5D1]/60 focus:outline-none focus:ring-1 focus:ring-[#00E5D1]/25"
+                  className="relative z-20"
+                />
+                <div>
+                  <label className={labelClass} htmlFor="zone-object-id">
+                    Object ID / reference
+                  </label>
+                  <input
+                    id="zone-object-id"
+                    value={objectReferenceId}
+                    onChange={(e) => setObjectReferenceId(e.target.value)}
+                    placeholder="OSM reference or custom ID"
+                    className="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass} htmlFor="zone-object-radius">
+                    Object radius (meters)
+                  </label>
+                  <input
+                    id="zone-object-radius"
+                    type="number"
+                    min={1}
+                    value={objectRadiusMeters}
+                    onChange={(e) => setObjectRadiusMeters(Number(e.target.value) || 0)}
+                    className="w-full rounded-md border border-slate-700/80 bg-[#151a20] px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Search for a place (building, cafe, etc.), pick a result, then set the radius.
+                  You can also click the map once to fine-tune the anchor point.
+                </p>
               </div>
             )}
 
@@ -2436,15 +2724,7 @@ export default function Dashboard() {
                             <button
                               key={entry.key}
                               type="button"
-                              onClick={() => {
-                                loadSavedZone(entry);
-                                const focusCell = Array.isArray(zone.h3_cells)
-                                  ? zone.h3_cells[0]
-                                  : undefined;
-                                if (focusCell) focusH3Cell(focusCell);
-                                const focusPoly = zoneToPolygons(zone)[0];
-                                if (!focusCell && focusPoly) focusPolygonShape(focusPoly);
-                              }}
+                              onClick={() => loadSavedZone(entry)}
                               className={`shrink-0 rounded-md border px-2.5 py-1.5 text-xs transition ${
                                 isActive
                                   ? "border-[#00E5D1] bg-[#00E5D1]/20 text-white"

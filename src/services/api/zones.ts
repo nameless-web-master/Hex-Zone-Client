@@ -8,6 +8,8 @@ export type ZoneType =
   | "proximity"
   | "object"
   | "geofence"
+  | "communal_id"
+  | "government_local_code"
   | "custom_1"
   | "custom_2";
 

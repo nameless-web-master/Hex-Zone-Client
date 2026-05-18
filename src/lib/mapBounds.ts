@@ -1,3 +1,4 @@
+import * as turf from "@turf/turf";
 import L from "leaflet";
 import { h3ToPolygon } from "./h3";
 import type { GeoPolygonShape } from "./geoPoly";
@@ -34,5 +35,24 @@ export function cornersFromPolygonShape(p: GeoPolygonShape): FitBoundsCorners | 
   return {
     southWest: [sw.lat, sw.lng],
     northEast: [ne.lat, ne.lng],
+  };
+}
+
+/** Bounding box for a circle zone (object / proximity preview). */
+export function cornersFromCircle(
+  center: [number, number],
+  radiusMeters: number,
+): FitBoundsCorners | null {
+  const [lat, lng] = center;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) return null;
+  const circle = turf.circle([lng, lat], radiusMeters / 1000, {
+    units: "kilometers",
+    steps: 32,
+  });
+  const bbox = turf.bbox(circle);
+  return {
+    southWest: [bbox[1], bbox[0]],
+    northEast: [bbox[3], bbox[2]],
   };
 }

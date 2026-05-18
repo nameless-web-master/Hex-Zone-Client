@@ -11,6 +11,11 @@ export type PhotonProperties = {
   country?: string;
   locality?: string;
   postcode?: string;
+  osm_id?: number;
+  osm_type?: string;
+  osm_key?: string;
+  osm_value?: string;
+  type?: string;
 };
 
 export type PhotonFeature = {
@@ -38,6 +43,27 @@ export function formatPhotonLabel(p: PhotonProperties): string {
   const deduped = [...new Set(parts)];
   const joined = deduped.join(", ");
   return joined.trim() || p.name?.trim() || "Unknown location";
+}
+
+/** Short category for POIs (cafe, building, shop, …). */
+export function formatPhotonPlaceCategory(p: PhotonProperties): string {
+  const key = (p.osm_key ?? "").trim();
+  const val = (p.osm_value ?? "").trim();
+  if (key && val) return `${key}: ${val}`;
+  if (val) return val;
+  if (key) return key;
+  const type = (p.type ?? "").trim();
+  return type && type !== "house" ? type : "";
+}
+
+/** Stable reference id for a selected OSM place. */
+export function photonPlaceReferenceId(feature: PhotonFeature): string {
+  const p = feature.properties;
+  if (p.osm_id != null && p.osm_type) {
+    return `${p.osm_type}-${p.osm_id}`;
+  }
+  const [lng, lat] = feature.geometry.coordinates;
+  return `place-${lat.toFixed(5)}-${lng.toFixed(5)}`;
 }
 
 export async function searchPhotonAddresses(

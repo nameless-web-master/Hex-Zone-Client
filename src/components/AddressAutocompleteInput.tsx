@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import {
   formatPhotonLabel,
+  formatPhotonPlaceCategory,
   searchPhotonAddresses,
   type PhotonFeature,
 } from "../lib/addressSearch";
@@ -15,8 +16,12 @@ export type AddressAutocompleteInputProps = {
   id: string;
   label: string;
   value: string;
-  /** Called with formatted address; `coords` is `[lat, lng]` when a suggestion is chosen, or `null` when the user edits the field manually. */
-  onChange: (address: string, coords: [number, number] | null) => void;
+  /** Called with formatted address; `coords` is `[lat, lng]` when a suggestion is chosen, or `null` when the user edits the field manually. `feature` is set when a suggestion is picked. */
+  onChange: (
+    address: string,
+    coords: [number, number] | null,
+    feature?: PhotonFeature,
+  ) => void;
   required?: boolean;
   placeholder?: string;
   labelClassName?: string;
@@ -91,7 +96,7 @@ export function AddressAutocompleteInput({
     }
     const labelText = formatPhotonLabel(feature.properties);
     const [lon, lat] = feature.geometry.coordinates;
-    onChange(labelText, [lat, lon]);
+    onChange(labelText, [lat, lon], feature);
     setAddressSuggestOpen(false);
     setAddressSuggestions([]);
   };
@@ -165,7 +170,9 @@ export function AddressAutocompleteInput({
         >
           {addressSuggestions.map((feature, index) => {
             const mainLabel = formatPhotonLabel(feature.properties);
+            const category = formatPhotonPlaceCategory(feature.properties);
             const sub = [
+              category,
               feature.properties.city ||
                 feature.properties.town ||
                 feature.properties.village,
