@@ -12,6 +12,7 @@ import {
   type GeoPropagationInboxDetail,
 } from "../lib/inboxRealtime";
 import {
+  parseBlocksChangedSocketEvent,
   parseMessageFeatureSocketEvent,
   parseMessageSocketPayload,
 } from "../services/socket/messageSocket";
@@ -26,12 +27,8 @@ function sortByNewest(list: Message[]) {
   );
 }
 
-// Polls `GET /messages` + `GET /message-feature/blocks` while the user is
-// active. Polling is the **fallback** path; the WebSocket triggers the same
-// hydrate on the fly via `parseInboxSocketRefetchSignal`. Loop is built around
-// refs so React Strict Mode and dependency changes (block rules, callbacks)
-// never schedule a second concurrent poll, which previously caused an O(N)
-// loop hammering the API multiple times per second.
+// HTTP hydrate on mount + reconnect. Periodic poll only when the WebSocket is
+// not open (fallback). Live updates arrive via socket frames.
 const POLL_INTERVAL_MS = 30_000;
 
 export function useMessageFeed(zoneIds: string[]) {
@@ -180,6 +177,10 @@ export function useMessageFeed(zoneIds: string[]) {
 
   useEffect(() => {
     if (!lastMessage) return;
+    if (parseBlocksChangedSocketEvent(lastMessage)) {
+      scheduleInboxRefetchFromSocket();
+      return;
+    }
     const geoEvent = parseMessageFeatureSocketEvent(lastMessage);
     if (geoEvent?.type === "NEW_GEO_MESSAGE") {
       applyGeoPropagationToInbox(geoEvent.data);
@@ -196,7 +197,8 @@ export function useMessageFeed(zoneIds: string[]) {
       if (
         parsed.type === "PERMISSION_MESSAGE" ||
         parsed.type === "unexpected_guest" ||
-        parsed.type === "guest_is_here"
+        parsed.type === "guest_is_here" ||
+        parsed.type === "GUEST_REQUEST_CHANGED"
       ) {
         scheduleInboxRefetchFromSocket();
       }
@@ -241,55 +243,24 @@ export function useMessageFeed(zoneIds: string[]) {
       setGlobalMessagesRef.current([]);
       return;
     }
-    let active = true;
-    let pollTimer: number | undefined;
-    let inFlight = false;
+    setLoading(true);
+    void hydrateInbox().finally(() => setLoading(false));
+  }, [token, ownerId, hydrateInbox]);
 
-    const poll = async () => {
-      if (!active || inFlight) {
-        if (active && !pollTimer) {
-          pollTimer = window.setTimeout(poll, POLL_INTERVAL_MS);
-        }
-        return;
-      }
-      inFlight = true;
-      setLoading(true);
-      try {
-        const [messagesResult, blocksResult] = await Promise.all([
-          listMessages({
-            owner_id: ownerId,
-            skip: 0,
-            limit: 100,
-          }),
-          listMessageFeatureBlocks(),
-        ]);
-        if (!active) return;
-        const rules = blocksResult.error
-          ? blockRulesRef.current
-          : (blocksResult.data ?? []);
-        if (!blocksResult.error) {
-          setBlockRules(rules);
-        }
-        if (messagesResult.error) {
-          setError(messagesResult.error);
-        } else {
-          setError(null);
-          applyInboxBatch(messagesResult.data ?? [], rules);
-        }
-      } finally {
-        inFlight = false;
-        if (active) setLoading(false);
-        if (active) pollTimer = window.setTimeout(poll, POLL_INTERVAL_MS);
-      }
-    };
+  useEffect(() => {
+    if (status !== "open") return;
+    if (!Number.isFinite(ownerId) || ownerId <= 0 || !token) return;
+    void hydrateInbox();
+  }, [status, ownerId, token, hydrateInbox]);
 
-    void poll();
-
-    return () => {
-      active = false;
-      if (pollTimer) window.clearTimeout(pollTimer);
-    };
-  }, [token, ownerId, applyInboxBatch]);
+  useEffect(() => {
+    if (status === "open") return;
+    if (!Number.isFinite(ownerId) || ownerId <= 0 || !token) return;
+    const pollTimer = window.setInterval(() => {
+      void hydrateInbox();
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(pollTimer);
+  }, [status, token, ownerId, hydrateInbox]);
 
   useEffect(() => {
     setGlobalMessages(messages);

@@ -1,16 +1,21 @@
 import { useEffect } from "react";
 import { updateLocation } from "../services/api/members";
+import { useWebSocket } from "./useWebSocket";
 
 /** How often we push GPS to the server for in-zone recipient matching. */
 const SYNC_INTERVAL_MS = 30_000;
 
 /**
- * Periodically publishes the browser's GPS position to the server
- * (`POST /members/location`) so dynamic zones and live geo workflows have
- * a current position in `member_locations`. Home address coords on the owner
- * profile are not updated by this sync.
+ * Periodically publishes the browser's GPS position to the server.
+ * Prefers WebSocket **`LOCATION_UPDATE`** when connected; falls back to
+ * **`POST /members/location`** when the socket is closed.
  */
 export function useLocationSync(token: string | null) {
+  const { status, sendMessage } = useWebSocket({
+    token,
+    zoneIds: [],
+  });
+
   useEffect(() => {
     if (!token) return;
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
@@ -22,10 +27,18 @@ export function useLocationSync(token: string | null) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           if (cancelled) return;
-          void updateLocation({
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
+          const latitude = pos.coords.latitude;
+          const longitude = pos.coords.longitude;
+          const sent =
+            status === "open" &&
+            sendMessage({
+              type: "LOCATION_UPDATE",
+              latitude,
+              longitude,
+            });
+          if (!sent) {
+            void updateLocation({ latitude, longitude });
+          }
         },
         () => {
           /* permission denied / unavailable — ignore and retry next tick */
@@ -40,5 +53,5 @@ export function useLocationSync(token: string | null) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [token]);
+  }, [token, status, sendMessage]);
 }

@@ -99,9 +99,12 @@ export async function fetchMe() {
 }
 
 /** PATCH /owners/{owner_id} — partial owner update (e.g. active). */
-export interface OwnerUpdatePayload {
+export type OwnerUpdatePayload = {
   first_name?: string | null;
   last_name?: string | null;
+  email?: string | null;
+  role?: "administrator" | "user" | null;
+  avatar_url?: string | null;
   active?: boolean | null;
   account_type?:
     | "private"
@@ -110,7 +113,7 @@ export interface OwnerUpdatePayload {
     | "enhanced"
     | "enhanced_plus"
     | null;
-}
+};
 
 export async function updateOwner(
   ownerId: number | string,

@@ -23,11 +23,14 @@ import { normalizeAccountType } from "../../lib/accountLimits";
 import {
   describeDeviceSyncFailure,
   DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE,
+  getOrCreateDeviceHid,
   isLocalDeviceSessionActive,
   setCurrentDeviceOffline,
   syncCurrentDevice,
 } from "../../lib/deviceSync";
 import { DeviceSessionConflictError } from "../../lib/deviceSync";
+import { useWebSocket } from "../../hooks/useWebSocket";
+import { parseSessionRevokedSocketEvent } from "../../services/socket/messageSocket";
 
 type LegacyRegisterPayload = {
   email: string;
@@ -182,6 +185,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => getStoredToken());
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(false);
+  const { lastMessage, status: wsStatus } = useWebSocket({
+    token,
+    zoneIds: [],
+  });
 
   const performLogout = async (markOffline: boolean) => {
     if (markOffline) {
@@ -257,8 +264,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token, user]);
 
   // Sign out this browser when another device takes over the account session.
+  // Prefer SESSION_REVOKED over the socket; HTTP poll only while WS is down.
   useEffect(() => {
     if (!token || !user?.id) return;
+    const evt = lastMessage ? parseSessionRevokedSocketEvent(lastMessage) : null;
+    if (!evt) return;
+    const localHid = getOrCreateDeviceHid().toUpperCase();
+    const revoked =
+      evt.released_hids.includes(localHid) ||
+      (evt.kept_hid != null &&
+        evt.kept_hid.length > 0 &&
+        evt.kept_hid !== localHid);
+    if (!revoked) return;
+    window.alert(DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE);
+    void performLogout(false);
+  }, [token, user, lastMessage]);
+
+  useEffect(() => {
+    if (!token || !user?.id) return;
+    if (wsStatus === "open") return;
     const ownerId = String(user.id);
     let cancelled = false;
 
@@ -287,7 +311,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [token, user]);
+  }, [token, user, wsStatus]);
 
   useEffect(() => {
     if (!token) return;

@@ -60,7 +60,7 @@ export function GuestPassListSection({ zoneId, isAdmin }: Props) {
   const [actionError, setActionError] = useState("");
   const [expanded, setExpanded] = useState(false);
 
-  const { lastMessage } = useWebSocket({
+  const { lastMessage, status } = useWebSocket({
     token,
     zoneIds: normalizedZoneId ? [normalizedZoneId] : [],
   });
@@ -87,9 +87,14 @@ export function GuestPassListSection({ zoneId, isAdmin }: Props) {
   }, [normalizedZoneId]);
 
   useEffect(() => {
+    if (status === "open") return;
     const handle = window.setInterval(() => void refresh(), 25_000);
     return () => window.clearInterval(handle);
-  }, [refresh]);
+  }, [status, refresh]);
+
+  useEffect(() => {
+    if (status === "open") void refresh();
+  }, [status, refresh]);
 
   useEffect(() => {
     if (!lastMessage) return;

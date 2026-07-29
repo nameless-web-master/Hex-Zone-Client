@@ -50,7 +50,7 @@ export function GuestRequestsDashboardSection({ zoneId }: Props) {
   const [chatNote, setChatNote] = useState("");
   const [listExpanded, setListExpanded] = useState(false);
 
-  const { lastMessage } = useWebSocket({
+  const { lastMessage, status } = useWebSocket({
     token,
     zoneIds: normalizedZoneId ? [normalizedZoneId] : [],
   });
@@ -78,12 +78,26 @@ export function GuestRequestsDashboardSection({ zoneId }: Props) {
   }, [normalizedZoneId]);
 
   useEffect(() => {
+    if (status === "open") return;
     const handle = window.setInterval(() => void refresh(), 25_000);
     return () => window.clearInterval(handle);
-  }, [refresh]);
+  }, [status, refresh]);
+
+  useEffect(() => {
+    if (status === "open") void refresh();
+  }, [status, refresh]);
 
   useEffect(() => {
     if (!lastMessage) return;
+    try {
+      const parsed = JSON.parse(lastMessage) as { type?: string };
+      if (parsed.type === "GUEST_REQUEST_CHANGED") {
+        void refresh();
+        return;
+      }
+    } catch {
+      /* fall through to arrival parsers */
+    }
     const evt = parseGuestArrivalSocketEvent(lastMessage);
     if (!evt) return;
     setRows((prev) => {

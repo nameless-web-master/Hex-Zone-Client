@@ -30,6 +30,7 @@ import { getOwners, type OwnerListItem } from "../services/api/auth";
 import { getMembers, type Member } from "../services/api/members";
 import { getZones } from "../services/api/zones";
 import { useAuth } from "../hooks/useAuth";
+import { useWebSocket } from "../hooks/useWebSocket";
 import {
   getMessageTypeCategory,
   getMessageScopeForType,
@@ -98,7 +99,7 @@ const MESSAGING_ACTIONS: QuickAction[] = [
 ];
 
 export default function Messages() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { zoneNames } = useZoneNameLookup();
   const [searchParams] = useSearchParams();
   const settings = useAppSettings();
@@ -249,9 +250,15 @@ export default function Messages() {
     };
   }, [effectiveZoneForGuests]);
 
+  const { lastMessage: guestWsMessage, status: guestWsStatus } = useWebSocket({
+    token,
+    zoneIds: effectiveZoneForGuests.trim() ? [effectiveZoneForGuests.trim()] : [],
+  });
+
   useEffect(() => {
     const z = effectiveZoneForGuests.trim();
     if (!z) return;
+    if (guestWsStatus === "open") return;
     const intervalId = window.setInterval(() => {
       void listGuestRequestsForZone(z).then((res) => {
         if (res.error) return;
@@ -259,7 +266,29 @@ export default function Messages() {
       });
     }, 18_000);
     return () => window.clearInterval(intervalId);
-  }, [effectiveZoneForGuests]);
+  }, [effectiveZoneForGuests, guestWsStatus]);
+
+  useEffect(() => {
+    if (!guestWsMessage) return;
+    try {
+      const parsed = JSON.parse(guestWsMessage) as { type?: string };
+      if (
+        parsed.type === "GUEST_REQUEST_CHANGED" ||
+        parsed.type === "unexpected_guest" ||
+        parsed.type === "guest_is_here" ||
+        parsed.type === "PERMISSION_MESSAGE"
+      ) {
+        const z = effectiveZoneForGuests.trim();
+        if (!z) return;
+        void listGuestRequestsForZone(z).then((res) => {
+          if (res.error) return;
+          setGuestRows(res.data);
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [guestWsMessage, effectiveZoneForGuests]);
 
   const accessZonePermissionCount = useMemo(
     () => messages.reduce((acc, m) => acc + (m.type === "PERMISSION" ? 1 : 0), 0),

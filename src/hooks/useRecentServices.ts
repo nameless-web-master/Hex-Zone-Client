@@ -86,7 +86,7 @@ export function useRecentServices(zoneId?: string) {
     [],
   );
 
-  const { lastMessage } = useWebSocket({ token, zoneIds });
+  const { lastMessage, status } = useWebSocket({ token, zoneIds });
 
   useEffect(() => {
     if (!lastMessage) return;
@@ -112,7 +112,8 @@ export function useRecentServices(zoneId?: string) {
       const parsed = JSON.parse(lastMessage) as { type?: string };
       if (
         parsed.type === "NEW_MESSAGE" ||
-        parsed.type === "NEW_GEO_MESSAGE"
+        parsed.type === "NEW_GEO_MESSAGE" ||
+        parsed.type === "BLOCKS_CHANGED"
       ) {
         scheduleRefresh();
       }
@@ -126,10 +127,15 @@ export function useRecentServices(zoneId?: string) {
   }, [refresh]);
 
   useEffect(() => {
+    if (status === "open") void refresh();
+  }, [status, refresh]);
+
+  useEffect(() => {
+    if (status === "open") return;
     if (!Number.isFinite(ownerId) || ownerId <= 0 || !token) return;
     const timer = window.setInterval(() => void refresh(), POLL_MS);
     return () => window.clearInterval(timer);
-  }, [ownerId, token, refresh]);
+  }, [status, ownerId, token, refresh]);
 
   useEffect(() => {
     return () => {
