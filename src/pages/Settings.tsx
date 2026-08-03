@@ -254,9 +254,10 @@ export default function Settings() {
             <Megaphone className="h-5 w-5 text-[#2F80ED]" /> Smart-home integration
           </div>
           <p className="mb-4 text-sm text-[#566784]">
-            First add a smart-home hub on Device Manager (DEV- ID). Then copy the
-            API key and Network ID onto that hub. Set a webhook for push delivery,
-            or leave it blank and rely on periodical polling.
+            First add a smart-home hub on Device Manager (DEV- ID). Copy the API
+            key and Network ID onto that hub. To receive Hex Zone alarms on the
+            hub, paste the hub’s public webhook URL below — Hex Zone will POST
+            alarms there. Leave webhook blank if the hub only polls.
           </p>
           <div className="space-y-3">
             <Field
@@ -308,10 +309,13 @@ export default function Settings() {
                   sharedNotification: { ...draft.sharedNotification, webhook: v },
                 })
               }
-              placeholder="https://your-device.local/alert"
+              placeholder="https://hub.example.com/hooks/hex-zone"
             />
             <p className="-mt-1 text-xs text-[#8694AC]">
-              Optional callback URL on the device to accept pushed notifications.
+              When set, Hex Zone POSTs SENSOR/PANIC/WELLNESS and other zone alerts
+              to this URL (JSON event{" "}
+              <code className="text-[#8694AC]">SMART_HOME_ALARM</code>). Use a
+              publicly reachable hub URL.
             </p>
             <Field
               label="Periodical Check (sec)"
@@ -327,7 +331,7 @@ export default function Settings() {
               placeholder="86400"
             />
             <p className="-mt-1 text-xs text-[#8694AC]">
-              How often the device polls the server when no webhook is set.
+              Hint for hubs that poll instead of (or in addition to) webhook push.
             </p>
           </div>
           <div className="mt-4 flex items-center gap-3">
