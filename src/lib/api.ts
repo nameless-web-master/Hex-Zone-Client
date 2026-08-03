@@ -150,6 +150,8 @@ export interface CreateDevicePayload {
   enable_notification: boolean;
   alert_threshold_meters: number;
   update_interval_seconds: number;
+  active?: boolean;
+  is_online?: boolean;
 }
 
 /** PATCH /devices/{device_id} — update device settings. */

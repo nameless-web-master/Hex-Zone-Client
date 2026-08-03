@@ -27,10 +27,12 @@ import { useAuth } from "../hooks/useAuth";
 import { AddressAutocompleteInput } from "../components/AddressAutocompleteInput";
 import {
   deriveDeviceOnline,
+  isClientSessionHid,
+  isSmartHomeHid,
   removeDevice,
   signOutDevice,
 } from "../lib/deviceSync";
-import { AlertTriangle, CircleDot, Plus, Smartphone, X } from "lucide-react";
+import { AlertTriangle, CircleDot, Home, Plus, Smartphone, X } from "lucide-react";
 
 const ACCENT = "#2F80ED";
 const H3_RESOLUTION = 10;
@@ -40,10 +42,10 @@ const DM_ADDRESS_LABEL =
 const DM_ADDRESS_INPUT =
   "w-full rounded-md border border-[#DCE6F2] bg-[#F7FAFE] px-3 py-2.5 text-sm text-[#0F2C5C] placeholder:text-[#8694AC] focus:border-[#2F80ED] focus:outline-none focus:ring-2 focus:ring-[#2F80ED]/25";
 const DEVICE_LIMIT_MESSAGE_BY_ACCOUNT = {
-  PRIVATE: "Private accounts can register up to 1 device.",
-  EXCLUSIVE: "Exclusive accounts are limited to 1 device.",
-  PRIVATE_PLUS: "Private+ accounts can register up to 10 devices.",
-  ENHANCED: "Enhanced accounts are limited to 1 device.",
+  PRIVATE: "Private accounts can register up to 1 smart-home hub.",
+  EXCLUSIVE: "Exclusive accounts are limited to 1 smart-home hub.",
+  PRIVATE_PLUS: "Private+ accounts can register up to 10 smart-home hubs.",
+  ENHANCED: "Enhanced accounts are limited to 1 smart-home hub.",
   ENHANCED_PLUS: "",
 } as const;
 
@@ -594,8 +596,10 @@ export default function DeviceManager() {
     setAddError(null);
     setModalOpen(true);
     void loadRegisteredOwners().then((list) => {
+      const fallbackId =
+        list[0]?.id ?? (user?.id != null ? String(user.id) : "");
       setAddForm({
-        userId: list[0]?.id ?? "",
+        userId: fallbackId,
         hid: generateDeviceHid(),
         deviceName: "",
         address: "123 Main St, Anytown",
@@ -639,7 +643,18 @@ export default function DeviceManager() {
   }, [modalOpen]);
 
   const handleAddDevice = async () => {
-    const ru = registeredUsers.find((u) => u.id === addForm.userId);
+    const ru =
+      registeredUsers.find((u) => u.id === addForm.userId) ??
+      (user?.id != null
+        ? {
+            id: String(user.id),
+            displayName:
+              `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() ||
+              user.email ||
+              `User ${user.id}`,
+            email: String(user.email ?? ""),
+          }
+        : null);
     if (!ru) {
       setAddError("Select a registered user.");
       return;
@@ -653,10 +668,11 @@ export default function DeviceManager() {
       return;
     }
     const deviceLimit = getDeviceLimit(normalizedAccountType);
-    if (devices.length >= deviceLimit) {
+    const smartHomeCount = devices.filter((d) => isSmartHomeHid(d.hid)).length;
+    if (smartHomeCount >= deviceLimit) {
       setAddError(
         DEVICE_LIMIT_MESSAGE_BY_ACCOUNT[normalizedAccountType] ||
-          "This account has reached its device limit.",
+          "This account has reached its smart-home device limit.",
       );
       return;
     }
@@ -678,6 +694,8 @@ export default function DeviceManager() {
       enable_notification: addForm.enable_notification,
       alert_threshold_meters: addForm.alert_threshold_meters,
       update_interval_seconds: addForm.update_interval_seconds,
+      is_online: false,
+      active: true,
     };
 
     const cachePayload: CachedDeviceSettings = {
@@ -855,12 +873,17 @@ export default function DeviceManager() {
 
   const warningCopy =
     accountLabel === "Private"
-      ? `All devices in a Private account must share the same zone type. Each user defines three (3) acceptable zones based on H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
+      ? `Private accounts allow 1 smart-home hub. Phones and browsers register as login sessions and do not use that slot. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
       : accountLabel === "Private+"
-        ? `Private+ supports up to 10 devices. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
+        ? `Private+ supports up to 10 smart-home hubs. Phones/browsers are separate login sessions. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
         : accountLabel === "Exclusive" || accountLabel === "Enhanced"
-          ? `${accountLabel} accounts support one registered device. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
-          : `Enhanced+ has no device cap. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`;
+          ? `${accountLabel} accounts support 1 smart-home hub. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`
+          : `Enhanced+ has no smart-home hub cap. Zones use H3 Geospatial Indexing (resolution = ${H3_RESOLUTION}).`;
+
+  const smartHomeCount = devices.filter((d) => isSmartHomeHid(d.hid)).length;
+  const smartHomeLimit = getDeviceLimit(normalizedAccountType);
+  const atSmartHomeLimit =
+    Number.isFinite(smartHomeLimit) && smartHomeCount >= smartHomeLimit;
 
   return (
     <div className="space-y-6">
@@ -888,19 +911,40 @@ export default function DeviceManager() {
       </section>
 
       <section className="layer-card overflow-hidden p-0">
-        <div className="flex items-center gap-2 border-b border-[#DCE6F2] px-6 py-4">
-          <Smartphone
-            className="h-5 w-5"
-            style={{ color: ACCENT }}
-            strokeWidth={2}
-          />
-          <h2 className="text-lg font-semibold text-[#0F2C5C]">Devices</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DCE6F2] px-6 py-4">
+          <div className="flex items-center gap-2">
+            <Smartphone
+              className="h-5 w-5"
+              style={{ color: ACCENT }}
+              strokeWidth={2}
+            />
+            <div>
+              <h2 className="text-lg font-semibold text-[#0F2C5C]">Devices</h2>
+              <p className="text-xs text-[#8694AC]">
+                {Number.isFinite(smartHomeLimit)
+                  ? `${smartHomeCount} / ${smartHomeLimit} smart-home hubs`
+                  : `${smartHomeCount} smart-home hubs`}{" "}
+                · phones/browsers listed separately
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={openAddModal}
+            disabled={atSmartHomeLimit}
+            className="inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ backgroundColor: ACCENT }}
+          >
+            <Plus size={16} />
+            Add smart-home device
+          </button>
         </div>
         <div className="min-w-full overflow-x-auto">
           <table className="min-w-full divide-y divide-[#DCE6F2] text-sm text-[#566784]">
             <thead className="bg-[#F7FAFE] text-xs uppercase tracking-[0.2em] text-[#8694AC]">
               <tr>
                 <th className="px-6 py-4 text-left font-medium">Device ID</th>
+                <th className="px-6 py-4 text-left font-medium">Type</th>
                 <th className="px-6 py-4 text-left font-medium">User</th>
                 <th className="px-6 py-4 text-left font-medium">Status</th>
                 <th className="px-6 py-4 text-left font-medium">Last seen</th>
@@ -912,7 +956,7 @@ export default function DeviceManager() {
                 <tr>
                   <td
                     className="px-6 py-10 text-center text-[#8694AC]"
-                    colSpan={5}
+                    colSpan={6}
                   >
                     Loading devices…
                   </td>
@@ -921,23 +965,39 @@ export default function DeviceManager() {
                 <tr>
                   <td
                     className="px-6 py-10 text-center text-[#8694AC]"
-                    colSpan={5}
+                    colSpan={6}
                   >
-                    No devices yet. Please{" "}
-                    <span className="text-[#566784]">Refresh</span> to
-                    get devices, or check your{" "}
-                    <code className="text-[#8694AC]">Network Connection</code>{" "}
-                    and try again later.
+                    No devices yet. Tap{" "}
+                    <span className="font-semibold text-[#566784]">
+                      Add smart-home device
+                    </span>{" "}
+                    to register a hub, or sign in on a phone/browser to register a
+                    login session.
                   </td>
                 </tr>
               ) : (
                 sortedDevices.map((device) => {
                   const ui = deriveUiStatus(device);
+                  const kind = isSmartHomeHid(device.hid)
+                    ? "Smart home"
+                    : isClientSessionHid(device.hid)
+                      ? String(device.hid).toUpperCase().startsWith("WEB-")
+                        ? "Browser"
+                        : "Phone"
+                      : "Smart home";
                   return (
                     <tr key={device.id} className="hover:bg-[#F7FAFE]">
                       <td className="px-6 py-4 font-mono text-sm text-[#0F2C5C]">
-                        {device.hid}
+                        <span className="inline-flex items-center gap-2">
+                          {isSmartHomeHid(device.hid) ? (
+                            <Home size={14} style={{ color: ACCENT }} />
+                          ) : (
+                            <Smartphone size={14} style={{ color: ACCENT }} />
+                          )}
+                          {device.hid}
+                        </span>
                       </td>
+                      <td className="px-6 py-4 text-[#566784]">{kind}</td>
                       <td className="px-6 py-4 text-[#566784]">
                         {device.user_display_name?.trim() ||
                           device.name?.trim() ||
@@ -1052,11 +1112,11 @@ export default function DeviceManager() {
                   id="add-device-title"
                   className="text-xl font-semibold text-[#0F2C5C]"
                 >
-                  Add device
+                  Add smart-home device
                 </h2>
                 <p className="mt-1 text-sm text-[#8694AC]">
-                  Link a device to a registered user. Settings sync via REST for
-                  mobile clients.
+                  Register a hub with a DEV- ID. Then open Settings → Smart-home
+                  integration to copy the API key and Network ID onto the device.
                 </p>
               </div>
               <button
@@ -1085,15 +1145,16 @@ export default function DeviceManager() {
                   onChange={(e) =>
                     setAddForm((f) => ({ ...f, userId: e.target.value }))
                   }
-                  disabled={usersLoading || registeredUsers.length === 0}
+                  disabled={usersLoading}
                 >
                   {usersLoading ? (
                     <option value="">Loading users from database…</option>
                   ) : registeredUsers.length === 0 ? (
-                    <option value="">
-                      {usersError
-                        ? "Could not load users"
-                        : "No registered owners in the database"}
+                    <option value={user?.id != null ? String(user.id) : ""}>
+                      {user?.email
+                        ? `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() ||
+                          user.email
+                        : "Current account"}
                     </option>
                   ) : (
                     registeredUsers.map((u) => (
@@ -1107,7 +1168,8 @@ export default function DeviceManager() {
                   !usersError &&
                   registeredUsers.length === 0 && (
                     <p className="mt-2 text-xs text-[#8694AC]">
-                      Users come from{" "}
+                      Hub will be registered under your account. Members list was
+                      empty from{" "}
                       <code className="text-[#8694AC]">GET /members</code>.
                     </p>
                   )}
@@ -1322,16 +1384,12 @@ export default function DeviceManager() {
                 </button>
                 <button
                   type="button"
-                  disabled={
-                    addSubmitting ||
-                    usersLoading ||
-                    registeredUsers.length === 0
-                  }
+                  disabled={addSubmitting || usersLoading}
                   onClick={handleAddDevice}
                   className="rounded-md px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                   style={{ backgroundColor: ACCENT }}
                 >
-                  {addSubmitting ? "Saving…" : "Save device"}
+                  {addSubmitting ? "Saving…" : "Save smart-home device"}
                 </button>
               </div>
             </div>

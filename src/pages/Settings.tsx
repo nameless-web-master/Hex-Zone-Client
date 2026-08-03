@@ -254,21 +254,21 @@ export default function Settings() {
             <Megaphone className="h-5 w-5 text-[#2F80ED]" /> Smart-home integration
           </div>
           <p className="mb-4 text-sm text-[#566784]">
-            Configure how your smart-home device receives zone alerts from Hex
-            Zone. Use the API key and network id on the device. Set a webhook URL
-            for push delivery, or leave it blank and rely on periodical polling
-            instead.
+            First add a smart-home hub on Device Manager (DEV- ID). Then copy the
+            API key and Network ID onto that hub. Set a webhook for push delivery,
+            or leave it blank and rely on periodical polling.
           </p>
           <div className="space-y-3">
             <Field
               label="Hardware Identification (HID)"
               value={draft.sharedNotification.hid}
               onChange={() => {}}
-              placeholder="123456789-ABCD01"
+              placeholder="DEV-A1B2C3"
               disabled
             />
             <p className="-mt-1 text-xs text-[#8694AC]">
-              Smart-home device id registered in Device Manager.
+              Filled from your registered smart-home device (Device Manager → Add
+              device). MOB-/WEB- login clients are ignored here.
             </p>
             <Field
               label="Network ID"
