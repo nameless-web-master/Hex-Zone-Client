@@ -38,7 +38,7 @@ export const DEVICE_PRESENCE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export const DEVICE_CHANGE_PROMPT_TITLE = "Change the device?";
 export const DEVICE_CHANGE_PROMPT_MESSAGE =
-  "This account is already active on another device. Use this device instead? The other device will be signed out.";
+  "This account is already active on another device. Use this device instead? The other device will be signed out and removed.";
 export const DEVICE_CHANGE_DECLINED_MESSAGE =
   "Login cancelled. Sign out on the other device first, or choose to change the device when prompted.";
 export const DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE =

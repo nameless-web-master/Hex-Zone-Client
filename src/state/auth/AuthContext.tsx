@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -185,6 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => getStoredToken());
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(false);
+  const skipNextDeviceSyncRef = useRef(false);
   const { lastMessage, status: wsStatus } = useWebSocket({
     token,
     zoneIds: [],
@@ -256,8 +258,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!token || !user) return;
+    if (skipNextDeviceSyncRef.current) {
+      skipNextDeviceSyncRef.current = false;
+      return;
+    }
     void syncCurrentDevice(user).then((result) => {
-      if (result.status === "account-in-use" || result.status === "error") {
+      // Only a real multi-device conflict should end the session.
+      if (result.status === "account-in-use") {
         void performLogout(false);
       }
     });
@@ -348,6 +355,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (sync.status === "error") {
         throw new Error(describeDeviceSyncFailure(sync));
       }
+      skipNextDeviceSyncRef.current = true;
       setUser(normalized);
     } else {
       const me = await fetchCurrentUser();
@@ -360,6 +368,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (sync.status === "error") {
         throw new Error(describeDeviceSyncFailure(sync));
       }
+      skipNextDeviceSyncRef.current = true;
       setUser(normalized);
     }
     setToken(result.data.token);
