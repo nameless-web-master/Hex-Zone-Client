@@ -361,8 +361,9 @@ export default function Settings() {
           <BellRing className="h-5 w-5 text-[#E23B4E]" /> Quick alert &amp; button messages
         </div>
         <p className="mb-4 text-sm text-[#566784]">
-          Pre-programmed text sent when a quick button is pressed (panic, unknown,
-          non-specific/anti-retaliation, etc.). Leave blank to compose manually.
+          Pre-programmed text sent when a Quick Alert button is pressed (panic,
+          home alarm, NS panic, unknown, wellness check). Leave blank to compose
+          manually.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           {QUICK_MESSAGE_TYPES.map((type) => (

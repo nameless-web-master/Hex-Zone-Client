@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.com.neighbourhoodassistant.safe-zone-patrol",
+        "paths": ["/access*", "/join*"],
+        "components": [
+          { "/": "/access*" },
+          { "/": "/join*" }
+        ]
+      }
+    ]
+  }
+}

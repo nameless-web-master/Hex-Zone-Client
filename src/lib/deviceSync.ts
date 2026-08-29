@@ -163,7 +163,7 @@ export async function removeDevice(deviceId: number | string): Promise<void> {
 
 export async function syncCurrentDevice(
   user: AuthUser | null,
-  options?: { forceTakeover?: boolean },
+  options?: { forceTakeover?: boolean; resumeSession?: boolean },
 ): Promise<DeviceSyncResult> {
   if (!user) return { status: "ok" };
   try {
@@ -189,7 +189,7 @@ export async function syncCurrentDevice(
       (d) => String(d.hid).toUpperCase() === hid.toUpperCase(),
     );
     if (byLocalHid?.id != null) {
-      if (!options?.forceTakeover) {
+      if (!options?.forceTakeover && !options?.resumeSession) {
         const otherOnline = mine.filter(
           (d) =>
             String(d.hid).toUpperCase() !== hid.toUpperCase() &&

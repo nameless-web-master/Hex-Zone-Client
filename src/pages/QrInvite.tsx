@@ -5,7 +5,7 @@ import { useAuth } from "../hooks/useAuth";
 import { generateQrRegistrationToken, parseApiErrorBody } from "../lib/api";
 import {
   canAdministratorInviteUserMember,
-  MEMBER_INVITE_UNAVAILABLE_HINT,
+  memberInviteUnavailableHint,
   normalizeAccountType,
 } from "../lib/accountLimits";
 
@@ -25,7 +25,7 @@ export default function QrInvite() {
     accountType: user?.accountType,
     legacyAccountType: user?.account_type,
   });
-  const isExclusiveAccount = accountType === "EXCLUSIVE";
+  const inviteUnavailableHint = memberInviteUnavailableHint(accountType);
 
   const joinUrl = useMemo(() => {
     if (!joinToken) return "";
@@ -114,9 +114,8 @@ export default function QrInvite() {
           <QrCode size={16} strokeWidth={2} /> Scan to join
         </span>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[#566784]">
-          {isExclusiveAccount
-            ? "Exclusive accounts can invite exactly 1 user. They scan this code, enter their details, and register under your account."
-            : "Generate a code that links to your zone. New teammates scan it, enter their details, and register on your account."}
+          Generate a code that links to your zone. New teammates scan it, enter
+          their details, and register on your account.
         </p>
       </div>
 
@@ -135,7 +134,7 @@ export default function QrInvite() {
           )}
           {!canInviteUserMember && (
             <p className="mt-3 text-sm leading-relaxed text-[#E0992A]">
-              {MEMBER_INVITE_UNAVAILABLE_HINT}
+              {inviteUnavailableHint}
             </p>
           )}
           {!!userZoneId && (
@@ -199,10 +198,8 @@ export default function QrInvite() {
             <p className="mt-6 text-sm text-[#8694AC]">
               {userZoneId
                 ? canInviteUserMember
-                  ? isExclusiveAccount
-                    ? "Generate a token to invite your single Exclusive user."
-                    : "Generate a token to display your QR code invite."
-                  : MEMBER_INVITE_UNAVAILABLE_HINT
+                  ? "Generate a token to display your QR code invite."
+                  : inviteUnavailableHint
                 : "Your account needs a network ID to generate a QR code."}
             </p>
           )}

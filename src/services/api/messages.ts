@@ -70,6 +70,8 @@ export type Message = {
   relevant_zone_network_id?: string | null;
   relevant_zone_name?: string | null;
   relevant_zone_label?: string | null;
+  /** Up to 5 image URLs attached to the message. */
+  images?: string[];
 };
 
 export type ListMessagesParams = {
@@ -366,6 +368,43 @@ function permissionBodyFallback(meta: Record<string, unknown> | null): string {
   }
 }
 
+function extractMessageImages(
+  row: Record<string, unknown>,
+  msgRecord: Record<string, unknown> | null,
+  rawPayload: Record<string, unknown> | null,
+): string[] {
+  const nested =
+    rawPayload &&
+    rawPayload.msg != null &&
+    typeof rawPayload.msg === "object" &&
+    !Array.isArray(rawPayload.msg)
+      ? (rawPayload.msg as Record<string, unknown>)
+      : null;
+  const pick = (source: unknown): string[] => {
+    if (!Array.isArray(source)) return [];
+    const urls: string[] = [];
+    for (const item of source) {
+      if (typeof item !== "string") continue;
+      const token = item.trim();
+      if (
+        token &&
+        (token.startsWith("https://") ||
+          token.startsWith("http://") ||
+          token.startsWith("data:image/")) &&
+        urls.length < 5
+      ) {
+        urls.push(token);
+      }
+    }
+    return urls;
+  };
+  for (const source of [row.images, msgRecord?.images, rawPayload?.images, nested?.images]) {
+    const urls = pick(source);
+    if (urls.length) return urls;
+  }
+  return [];
+}
+
 export function normalizeMessage(raw: unknown): Message | null {
   if (!raw || typeof raw !== "object") return null;
   const row = raw as Record<string, unknown>;
@@ -428,8 +467,10 @@ export function normalizeMessage(raw: unknown): Message | null {
     textValue = servicePaFields.description?.trim() ?? "";
   }
 
+  const images = extractMessageImages(row, msgRecord, rowStructuredPayload);
+
   const allowSyntheticBody = type === "PERMISSION" || type === "CHAT";
-  if (textValue.length === 0 && allowSyntheticBody && msgRecord) {
+  if (textValue.length === 0 && allowSyntheticBody && msgRecord && images.length === 0) {
     textValue = permissionBodyFallback(msgRecord).trim();
   }
   if (textValue.length === 0 && type === "PERMISSION") {
@@ -440,7 +481,7 @@ export function normalizeMessage(raw: unknown): Message | null {
     textValue = "(Permission traffic)";
   }
   /** CHAT envelopes sometimes carry only structured metadata */
-  if (textValue.length === 0 && type === "CHAT") {
+  if (textValue.length === 0 && type === "CHAT" && images.length === 0) {
     textValue = "(Chat)";
   }
   if (
@@ -480,7 +521,7 @@ export function normalizeMessage(raw: unknown): Message | null {
     zoneId.trim().length === 0 ||
     resolvedSenderId == null ||
     typeof createdAt !== "string" ||
-    textValue.trim().length === 0
+    (textValue.trim().length === 0 && images.length === 0)
   ) {
     logMalformedMessageWarning(id, "missing core identifiers");
     return null;
@@ -571,6 +612,7 @@ export function normalizeMessage(raw: unknown): Message | null {
     ...(relevantZoneNetworkId ? { relevant_zone_network_id: relevantZoneNetworkId } : {}),
     ...(relevantZoneName ? { relevant_zone_name: relevantZoneName } : {}),
     ...(relevantZoneLabel ? { relevant_zone_label: relevantZoneLabel } : {}),
+    ...(images.length ? { images } : {}),
   };
 }
 
@@ -610,10 +652,15 @@ export function messageFromGeoPropagation(
   const type = toMessageType(propagation.type) ?? "UNKNOWN";
   const bodyFromMeta = metadataMsg ?? null;
   const servicePa = extractServicePaFields(bodyFromMeta);
+  const images = extractMessageImages(
+    propagation as unknown as Record<string, unknown>,
+    bodyFromMeta,
+    meta,
+  );
   const text =
     servicePa.description?.trim() ||
     (typeof propagation.text === "string" && propagation.text.trim()) ||
-    String(propagation.type ?? "ALARM");
+    (images.length ? "" : String(propagation.type ?? "ALARM"));
   const createdAt = propagation.created_at;
   const id = propagation.id;
   if (id == null || !zoneId || typeof createdAt !== "string") {

@@ -262,13 +262,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       skipNextDeviceSyncRef.current = false;
       return;
     }
-    void syncCurrentDevice(user).then((result) => {
+    void syncCurrentDevice(user, { resumeSession: true }).then((result) => {
       // Only a real multi-device conflict should end the session.
       if (result.status === "account-in-use") {
         void performLogout(false);
       }
     });
-  }, [token, user]);
+  }, [token, user?.id]);
 
   // Sign out this browser when another device takes over the account session.
   // Prefer SESSION_REVOKED over the socket; HTTP poll only while WS is down.

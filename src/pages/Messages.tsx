@@ -33,7 +33,6 @@ import { useAuth } from "../hooks/useAuth";
 import { useWebSocket } from "../hooks/useWebSocket";
 import {
   getMessageTypeCategory,
-  getMessageScopeForType,
   groupMessageTypesForUI,
   isAccessGuestChannelType,
   isPrivateMessageType,
@@ -47,7 +46,6 @@ import {
   groupMessageTypesForCategories,
 } from "../lib/messageInboxFilters";
 import {
-  getMessageWorkflow,
   isEmergencyMessageType,
   isUnknownMessageType,
   isServiceMessageType,
@@ -78,7 +76,7 @@ import {
 } from "../lib/privateMessageLocation";
 
 type QuickAction = {
-  type: QuickMessageType;
+  type: MessageType;
   label: string;
   icon: typeof BellRing;
   tone: "alarm" | "messaging";
@@ -86,7 +84,7 @@ type QuickAction = {
 
 const ALARM_ACTIONS: QuickAction[] = [
   { type: "PANIC", label: "PANIC", icon: BellRing, tone: "alarm" },
-  { type: "SENSOR", label: "SENSOR", icon: Radar, tone: "alarm" },
+  { type: "SENSOR", label: "HOME ALARM", icon: Radar, tone: "alarm" },
   { type: "NS_PANIC", label: "NS PANIC", icon: Siren, tone: "alarm" },
   { type: "UNKNOWN", label: "UNKNOWN", icon: HelpCircle, tone: "alarm" },
   { type: "WELLNESS_CHECK", label: "WELLNESS CHECK", icon: HeartPulse, tone: "alarm" },
@@ -435,12 +433,19 @@ export default function Messages() {
       if (quickBusy) return;
       if (isPrivateMessageType(type as MessageType)) {
         setComposeType(type as MessageType);
-        setComposeText((settings.quickMessages[type] ?? "").trim());
+        setComposeText(
+          type in settings.quickMessages
+            ? (settings.quickMessages[type as QuickMessageType] ?? "").trim()
+            : "",
+        );
         setQuickStatus("");
         return;
       }
       if (!confirmEmergencySend(type as MessageType)) return;
-      const presetText = (settings.quickMessages[type] ?? "").trim();
+      const presetText =
+        type in settings.quickMessages
+          ? (settings.quickMessages[type as QuickMessageType] ?? "").trim()
+          : "";
       if (!presetText) {
         // Types without a preset (e.g. PRIVATE) switch the composer instead.
         setComposeType(type as MessageType);
@@ -644,7 +649,6 @@ export default function Messages() {
     [groupedTypeOptions],
   );
   const visibleMessagingActions = MESSAGING_ACTIONS;
-  const composeWorkflow = getMessageWorkflow(composeType);
 
   const [composeTypeNotice, setComposeTypeNotice] = useState<string | null>(null);
 
@@ -655,13 +659,14 @@ export default function Messages() {
       "PERMISSION events are automatic from guest access workflow; switched to CHAT.",
     );
   }, [composeType]);
-  const composeScope = getMessageScopeForType(composeType);
-  const composeCategory = getMessageTypeCategory(composeType);
 
-  const selectMessagingType = (type: QuickMessageType) => {
-    setComposeType(type as MessageType);
+  const selectMessagingType = (type: MessageType) => {
+    setComposeType(type);
     setComposeServicePaFields({ subject: "", topic: "", subtopic: "" });
-    const preset = (settings.quickMessages[type] ?? "").trim();
+    const preset =
+      type in settings.quickMessages
+        ? (settings.quickMessages[type as QuickMessageType] ?? "").trim()
+        : "";
     if (preset) setComposeText(preset);
     setQuickStatus("");
   };
@@ -685,7 +690,7 @@ export default function Messages() {
                   key={action.type}
                   type="button"
                   disabled={!!quickBusy}
-                  onClick={() => void sendQuickAlert(action.type)}
+                  onClick={() => void sendQuickAlert(action.type as QuickMessageType)}
                   className={`flex flex-col items-center justify-center gap-2 rounded-xl border px-3 py-6 transition disabled:opacity-60 ${
                     nsPanic
                       ? "border-[#B5179E] bg-[#B5179E] text-white shadow-md hover:brightness-110"
@@ -918,26 +923,8 @@ export default function Messages() {
                 </optgroup>
               ))}
             </select>
-            <div className="grid grid-cols-2 gap-2 rounded-lg border border-[#DCE6F2] bg-[#F7FAFE] px-3 py-2 text-xs text-[#566784]">
-              <p>
-                Category: <span className="font-semibold text-[#0F2C5C]">{composeCategory}</span>
-              </p>
-              <p>
-                Scope: <span className="font-semibold capitalize text-[#0F2C5C]">{composeScope}</span>
-              </p>
-              <p className="col-span-2 text-[#8694AC]">Scope is determined by selected type.</p>
-            </div>
             {composeTypeNotice ? (
               <p className="text-xs text-[#E0992A]">{composeTypeNotice}</p>
-            ) : null}
-            {composeWorkflow ? (
-              <div className="rounded-lg border border-[#DCE6F2] bg-[#F7FAFE] px-3 py-2 text-xs text-[#566784]">
-                <p className="font-semibold text-[#0F2C5C]">
-                  {toMessageTypeLabel(composeType)} workflow
-                </p>
-                <p className="mt-1">{composeWorkflow.description}</p>
-                <p className="mt-1 text-[#8694AC]">{composeWorkflow.delivery}</p>
-              </div>
             ) : null}
             {isAccessGuestChannelType(composeType) && (
               <>
@@ -979,11 +966,6 @@ export default function Messages() {
             )}
             {!isAccessGuestChannelType(composeType) && isPrivateMessageType(composeType) && (
               <>
-                <p className="text-xs text-[#8694AC]">
-                  Same send flow as PANIC or PA (location propagation), but only
-                  the member you select below receives this message. Search by
-                  name or email.
-                </p>
                 <input
                   type="search"
                   value={privateSearchQuery}

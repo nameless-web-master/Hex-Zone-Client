@@ -165,6 +165,20 @@ export function MessageDetail({
                 {message.message}
               </p>
             ) : null}
+            {message.images?.length ? (
+              <div className="-mx-5 mt-3 overflow-x-auto snap-x snap-mandatory">
+                <div className="flex">
+                  {message.images.map((src, index) => (
+                    <img
+                      key={`${index}-${src.slice(0, 24)}`}
+                      src={src}
+                      alt=""
+                      className="h-52 w-full shrink-0 snap-center object-cover"
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
           {message.delivered_owner_ids && message.delivered_owner_ids.length > 0 ? (
             <div className="rounded-lg border border-[#DCE6F2] bg-[#F7FAFE] px-3 py-2">
